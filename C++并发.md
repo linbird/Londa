@@ -4,9 +4,15 @@
 + [线程管理](#线程管理)
     * [thread对象](#thread对象)
         - [线程创建](#线程创建)
-            + [线程运行方式](#线程运行方式)
-    * [参数传递](#参数传递)
-        - [**NOTE**](#note)
+        - [线程运行](#线程运行)
+            + [参数传递](#参数传递)
+                * [**NOTE**](#note)
+        - [线程结束](#线程结束)
+    * [线程管理](#线程管理-1)
+        - [让渡](#让渡)
+            + [yield](#yield)
+            + [sleep_for](#sleep_for)
+        - [限制调用](#限制调用)
 + [异常处理](#异常处理)
 + [数据共享](#数据共享)
     * [互斥量mutex](#互斥量mutex)
@@ -42,11 +48,11 @@
         - [指针原子类型std::atomic<T*>](#指针原子类型stdatomict)
         - [自定义原子类型](#自定义原子类型)
     * [原子操作支持](#原子操作支持)
+        - [自由函数](#自由函数)
     * [std::memory_order](#stdmemory_order)
-        - [memory_order_relaxed](#memory_order_relaxed)
-        - [memory_order_release / memory_order_acquire](#memory_order_release--memory_order_acquire)
-        - [memory_order_release / memory_order_consume](#memory_order_release--memory_order_consume)
-        - [memory_order_seq_cst](#memory_order_seq_cst)
+        - [问题背景](#问题背景)
+        - [**NOTE：**](#note-1)
+        - [与硬件层面的一致性比较](#与硬件层面的一致性比较)
 + [高级线程管理](#高级线程管理)
     * [线程池](#线程池)
 
@@ -92,9 +98,35 @@
 
 ## 线程管理
 
-### 让渡`yield`
+### 让渡
 
-* 在当前线程
+#### yield
+
+* 线程调用该方法时，主动让出CPU，并且不参与CPU的本次调度，从而让其他线程有机会运行。在后续的调度周期里再参与CPU调度。其让出的时间以CPU调度时间片为单位是不确定的，实现依赖于操作系统CPU调度策略，在不同的操作系统或者同一个操作系统的不同调度策略下，表现也可能是不同的。
+
+#### sleep_for
+
+* 让出CPU，并且休眠一段固定的(参数设置)时间，从而让其他线程有机会运行。等到休眠结束时，才参与CPU调度。
+
+### 限制调用
+
+* call_once(once_flag*, ...)：限制任务只能被多个线程累计执行一次
+```cpp
+void init() {} //此函数只会被执行一次
+
+void worker(once_flag* flag) {
+  call_once(*flag, init);
+}
+
+int main() {
+  once_flag flag;
+  thread t1(worker, &flag);
+  thread t2(worker, &flag);
+  t1.join();
+  t2.join();
+  return 0;
+}
+```
 
 # 异常处理
 
@@ -103,31 +135,46 @@
 # 数据共享
 
 + 只有多个线程中存在至少一个对共享数据的修改操作没，就有可能引发数据的错误
+
 + 需要在多个线程中保持一致的值称为不变量，多个线运行情况下需要保证只能有一个线程(即修改不变量的线程)可以看见不变量的中间状态
 
-## 互斥量mutex
+## 标准库提供的锁
+|           锁            |             功能             |
+| :---------------------: | :--------------------------: |
+|         `mutex`         |           基本互斥           |
+|      `timed_mutex`      |         带超时的互斥         |
+|    `recursive_mutex`    |     能被同一线程递归锁定     |
+| `recursive_timed_mutex` | 带超时的能被同一线程递归锁定 |
+|     `shared_mutex`      |           共享互斥           |
+|  `shared_timed_mutex`   |       带超时的共享互斥       |
+
+* 超时：额外提供了`try_lock_for`和`try_lock_until`方法，如果在超时的时间范围内没有能获取到锁，则直接返回，不再继续等待。
+* 可重入/可递归：指在同一个线程中，同一把锁可以锁定多次。这就避免了一些不必要的死锁。
+* 共享：这类互斥体同时提供了共享锁和互斥锁。互斥锁失败完全排它（一旦某个线程获取了互斥锁，任何其他线程都无法再获取互斥锁和共享锁）；共享锁不完全排它（如果有某个线程获取到了共享锁，其他线程无法再获取到互斥锁，但是还能获取到共享锁）。对互斥锁的访问的接口同一般锁一样，对共享锁的访问通过`lock_shared()、try_lock_shared()、unlock_shared()`三个函数实现。
+
+### 互斥量mutex
 
 + mutex实现了锁用来控制对共享数据的访问，提供了lock和unlock两个成员方法实现对数据加锁和解锁，处于两者之间的代码受到了mutex的互斥访问控制。
 + 推荐使用支持RAII的模板类`lock_guard<mutex>`来实现对互斥量的自动管理。
 + C++17的`scoped_lock(mutex_objs)`是C++11中的优化实现（此处没有模板类参数是因为C++17实现了模板类参数的自动推导）。
 
-### OOP设计
+#### OOP设计
 
 + 将mutex和需要保护的数据封装在同一个类中，要求所有成员函数在调用时加锁，在结束时解锁。
 + **NOTE**：需要特别注意类的调用方法的设计，避免向方法的调用者返回需要被保护的数据的指针或者引用，因为**mutex不能检测并保护通过指针或者引用方式访问**本该受保护的数据。同时也要注意任何一种以指针或者引用向外部传递了受保护数据的操作，这些操作都将使数据失去mutex的保护。总的原则就是**切勿将受保护数据的指针或引用传递到互斥锁作用域之外**。
 
-### 条件竞争与死锁
+## 条件竞争与死锁
 
-#### 条件竞争
+### 条件竞争
 
 + 多个线程竞争获取对同一个资源的访问权限
 + 接口设计的不合理也会导致条件竞争。
 
-#### 死锁
+### 死锁
 
 + 由于一个以上的互斥量由于锁定的顺序不当造成了互相锁定导致整个线程无法向前推进。
 
-##### 死锁避免
+#### 死锁避免
 
 1. 要求程序中的所有互斥量都要以相同的顺序申请锁。
 2. 一次性申请多个锁，使用`std::lock(mutex1, mutex2, ...)`同时锁定多个锁。
@@ -137,18 +184,50 @@
     3. 避免在持有锁的线程中调用外部代码，因为你可能不知道外部代码的具体操作，他们可能也在尝试获取锁从而违背了建议1。
     4. 实现并使用[层次锁](https://gist.github.com/ZhekaiJin/b2c591e5b78f2c4535a781844dd2e12a)，对应用进行分层,并且识别在给定层上所有互斥量。不允许高层对低层已持有该锁的互斥量再次加锁。[更多参考](http://zhengyi.me/2018/04/11/what-is-lock-hierarchy/)。![层次锁](./img/concurrency/layer-lock.gif)
 
-## lock_guard<mutex>
+## 管理锁
+
+* 为了避免需要手动管理互斥体，减少由于操作不当造成的问题。标准库基于RAII的编程技巧提供了自动化管理互斥体的类。
+
+|    管理类     |  标准  |                   特点                   |
+| :-----------: | :----: | :--------------------------------------: |
+| `lock_guard`  | C++ 11 | 严格基于作用域的**不可移动**互斥体管理器 |
+| `unique_lock` | C++11  |      **可移动**的互斥体所有权管理器      |
+| `shared_lock` | C++14  |    **可移动**的共享互斥体所有权管理器    |
+| `scoped_lock` | C++17  |       用于多个互斥体的免死锁管理器       |
+
+|   锁定策略    |                     说明                     |
+| :-----------: | :------------------------------------------: |
+| `defer_lock`  |              不获得互斥的所有权              |
+| `try_to_lock` |         尝试获得互斥的所有权而不阻塞         |
+| `adopt_lock`  | 假设调用方已拥有互斥的所有权，本类不尝试锁定 |
+
+```cpp
+// 以下三种写法效果一样
+lock(*accountA->getLock(), *accountB->getLock());
+lock_guard lockA(*accountA->getLock(), adopt_lock);
+lock_guard lockB(*accountB->getLock(), adopt_lock);
+
+unique_lock lockA(*accountA->getLock(), defer_lock);
+unique_lock lockB(*accountB->getLock(), defer_lock);
+lock(*accountA->getLock(), *accountB->getLock());
+
+scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
+```
+
+
+
+### lock_guard
 
 + 不可复制，不可移动转移所有权
 
-## unique_lock
+### unique_lock
 
 + 一种比lock_guard<>更加灵活的RAII类型的锁，不过对应的使用代价也要大一些。
-+ 允许延迟锁定(创建时不锁定)
-+ 允许限时深度锁定？？？？？？？？？
-+ 允许递归锁定，？？？？？？？？？？
++ 允许延迟锁定(创建时不锁定)。
++ 允许带超时的可重入锁定。
++ 允许递归可重入锁定。
 + 支持与条件变量一起使用。
-+ 不可复制，但可以通过move转移所有权
++ 不可复制，但可以通过move转移所有权。
 
 # 数据同步
 
@@ -156,65 +235,114 @@
 
 ### 等待固定时间
 
-1. 等待一个时间段，*_for()类函数：`std::this_thread::sleep_for(std::chrono::milliseconds(100))`让线程等待100ms;
-2. 等待某一个时间点，*_until()类函数：
-
-```cpp
-using namespace std::chrono_literals;
-int f();
-auto ft = std::async(f);
-
-if (ft.wait_for(1s) == std::future_status::ready){
-    std::cout << ft.get();
-}
-```
+1. 等待一个时间段：*_for()类函数。
+2. 等待某一个时间点：*_until()类函数。
 
 ### 等待条件满足
 
-+ 使用条件变量`std::condition_variable、std::condition_variable_any`配合互斥量mutex一起工作。
+#### 条件变量
 
-1. 条件变量的notify_one()成员函数会对通过成员函数wait()注册过的所有线程通知相应的事件。
-2. 条件变量的wait()成员函数在自己等待的条件未就绪时会解锁互斥量，并将当前线程置于阻塞或等待状态，当收到条件变量的notify_one()通知时，阻塞的线程会被唤醒并尝试对互斥量加锁并检查条件是否满足，满足就持有锁并返回，否则释放锁进入新的等待周期。
-3. 条件变量的notify_all()成员函数可以向所有阻塞的线程检测自己的wait()等待的条件是否满足。
+* 当一个线程所需要的条件不满足时，线程会等待到条件满足时再执行。条件变量提供了一个可以让多个线程间同步协作的功能。
 
-## feature
+|          条件变量           |                     说明                     |
+| :-------------------------: | :------------------------------------------: |
+|    `condition_variable`     |    提供与`std::unique_lock`关联的条件变量    |
+|  `condition_variable_any`   |        提供与任何锁类型关联的条件变量        |
+| `notify_all_at_thread_exit` | 安排到在此线程完全结束时对 notify_all 的调用 |
+|         `cv_status`         |       列出条件变量上定时等待的可能结果       |
 
-+ 标准库提供了std::future和std::shared_future两个类用于获取线程运行的返回值，其中前者只能与指定的事件关联，后者可以关联多个事件。
-+ future和promise都支持传递线程内部的异常，前者不需要特殊设置可以自动粗出异常，后者需要借助promise::set_exception()函数。
+#### 协作机制
+
+* 条件变量的`wait()`和`notify*()`共同构成了线程间互相协作的基础。
+1. `wait()`：在等待的条件**未就绪时会==解锁==互斥量，并让当前线程继续等待**，只有就绪时线程才会继续执行。
+
+2. `notify_all()/ notify_one()`：将条件变量中由于调用`wait()`而等待的的所有或一个线程唤醒，被唤醒的线程会尝试获取互斥锁并再次判断条件是否满足。
+
+   ```cpp
+   condition_variable mConditionVar; // ①
+   void changeMoney(double amount) {
+       unique_lock lock(mMoneyLock); // ②
+       mConditionVar.wait(lock, [this, amount] { // ③
+         return mMoney + amount > 0; // ④
+       });
+       mMoney += amount;
+       mConditionVar.notify_all(); // ⑤
+   }
+   // wait和notify_all虽然是写在一个函数中的，但是在运行时它们是在多线程环境中执行的，因此对于这段代码，需要能够从不同线程的角度去思考代码的逻辑。
+   ```
+
+## 异步执行
+* 异步可以使耗时的操作不影响当前主线程的执行流，在线程内部再提高效率。标准库定义了以下数据结构以提供支持。
+
+  |        类         |                      作用                      |
+  | :---------------: | :--------------------------------------------: |
+  |      `async`      | 异步运行一个函数，返回运行结果到`std::future`  |
+  | `packaged_task<>` |    打包一个函数，存储其返回值以进行异步获取    |
+  |    `future<>`     |               存储被异步设置的值               |
+  | `shared_future<>` | 等待被异步设置的值（可能为其他 future 所引用） |
+  |    `promise<>`    |          存储一个值以支持外部异步获取          |
 
 ### std::async
 
-+ 通过std:sync()可以启动一个后台任务，其具体的启动策略由sync()的控制参数控制。函数的全体参数由控制参数和运行参数两部分组成。std::async的运行返回值由std::feature接收。
++ 通过std:sync()可以启动一个后台任务，sync()的全体参数由控制参数和运行参数两部分组成，控制参数控制具体的启动策略（是否启用新线程以及运行时机），运行参数传递给实际任务执行者，参数形式和thread对象的构造函数相同，传统方式也相同。
 
-1. 控制参数：std::launch类型，std::launch::async要求函数必须异步执行在其他线程上，std::launch::deferred要求函数在future在调用get()或者wait()才实际执行。默认参数是async|deferred;
++ 控制参数：std::launch类型，支持异或运算
+
+  |          参数           |                             意义                             |
+  | :---------------------: | :----------------------------------------------------------: |
+  |  `std::launch::async`   |                 函数必须异步执行在其他线程上                 |
+  | `std::launch::deferred` | `future`被需要时（`future`调用`get()、wait()`时）再执行函数。 |
 
 ### std::packaged_task
 
-+ std::packaged_task<>是一个模板类，模板参数是一个函数签名。
-+ 该类通过其他符合签名(类型可以不完全匹配，因为可以隐式类型转换)的函数实例化之后就是一个可调用对象，调用该对象就会执行相关的函数或者可调用对象。
-+ std::packaged_task<>对象被调用后其返回值作为异步结果存储在std::future中，可以通过其get_future()成员函数获取。
++ `std::packaged_task<>`是一个模板类，模板参数是一个函数签名，表示一个可调用对象（可封装为`std::fucntion`或者作为线程函数传递）。
++ 使用它可以将函数签名**类似**（类型可以不完全匹配，因为可以隐式类型转换）的任务（函数或者可调用对象）封装为一个可调用对象，调用该对象就会执行相关的任务。[命令模式](https://en.wikipedia.org/wiki/Command_pattern)
++ 通过`std::packaged_task<>`对象的`get_future()`成员函数可以获取对象被调用执行后的返回值（作为异步结果存储在`std::future`中）。
 
-### future与promise
+### future、promise、shared_future
 
-+ std::promise<T>提供了一种机制，可以手动设置std::future<T>中的值
-+ std::promise和std::future共同提供了一种机制:future可以阻塞等待线程的数据就绪，promise可以设置提供数据的线程的值,并将future置为就绪态。
-+ 通常将promise对象传入到线程内部，线程内部设置pormise的值，线程外部通过的std::promise的get_future()成员函数获取与之相关的std::future对象的值。
+#### future与promise
 
-## shared_future
+* `promise`可以和**一个**`future`关联绑定，两者配合可以实现一个通信机制（`future`阻塞线程等待数据，`promise`提供数据并将`future`置为就绪态）：
+  
+  1. 将`promise`对象传入到线程内部并在内部设置值，线程外部通过的`std::promise::get_future()`成获取与之相关的`std::future`对象的值。
+  
+     ```cpp
+     void f(std::promise<void> ps){
+         ps.set_value();
+     }
+     
+     int main()
+     {
+         std::promise<void> ps;
+         auto ft = ps.get_future();
+     //    auto ft2 = ps.get_future(); // 抛出std::future_error异常
+         std::thread t(f, std::move(ps));
+         ft.wait(); // 阻塞直到set_value，相当于没有返回值的get
+         t.join();
+         return 0;
+     }
+     ```
+* 都支持传递线程内部的异常，`future`以自动抛出异常，`promise`需要借助`promise::set_exception()`函数。
 
-+ future**独享同步结果，所有权只能移动**，只能获取一次数据，即调用get之后不能再次调用get。
-+ shared_future支持让多个线程等待同一个事件，因为shared_future的实例是可拷贝的，多个shared_future对象可以引用同一结果。
+#### future与shared_future
 
-## 函数式编程FP
+|            |         `future`         |                 `shared_future`                 |
+| :--------: | :----------------------: | :---------------------------------------------: |
+|  事件关联  |   只能与指定的事件关联   |                可以关联多个事件                 |
+| 结果所有权 | 独享可移动、只能获取一次 | 可拷贝，多个shared_future对象可以引用同一结果。 |
+
+## 无锁编程范式
+
+### 函数式编程FP
 
 * FP不会改变外部状态，不修改共享数据就不存在race condition，因此也就没有必要使用锁，可以实现无锁的算法
 
-## CSP（Communicating Sequential Processer）
+### CSP（Communicating Sequential Processer）
 
 * CSP中的线程理论上是分开的，没有共享数据，但communication channel允许消息在不同线程间传递
 * 每个线程实际上是一个状态机，收到一条消息时就以某种方式更新状态，并且还可能发送消息给其他线程
-* 真正的CSP没有共享数据，所有通信通过消息队列传递，但由于C++线程共享地址空间，因此无法强制实现这个要求。
-[CSP实现ATM]()
+* 真正的CSP没有共享数据，所有通信通过消息队列传递，但由于C++线程共享地址空间，因此无法强制实现这个要求。[CSP实现ATM]()
 
 ## std::experimental
 
@@ -373,12 +501,13 @@ std::atomic<std::shared_ptr<int>> x; // C++20
 ### 问题背景
 * 多线程读写同一变量需要使用同步机制，最常见的同步机制就是`std::mutex`和`std::atomic`，其中`atomic`通常提供更好的性能。但在指令的执行过程中还面临以下问题：
     1. 在单线程中，由于编译器优化会执行会造成编译出的机器码出现指令重排，此时机器码的顺序和代码的逻辑顺序不同。
-    2. CPU部件为了提高效率，在执行指令时使用了乱序、多发射等技术，这也会导致机器码中的指令执行顺序和机器码顺序不同。
+    2. CPU部件为了提高效率，在执行指令时使用了乱序、多发射等技术，这也会导致机器码中的指令执行顺 序和机器码顺序不同。
     3. 在多核心的CPU上由于cache的设计，不同核心的cache数据可能不同。
 * 为了兼顾指令重拍带来的效率提升和阻止乱序执行可能造成的错误，需要手动限制编译器以及CPU对单线程当中的指令执行顺序进行重排的程度，于是引入了`std::memory_order`。
 * ~~为了控制多核CPU上对共享的同一个原子变量操作的顺序，消除指令重拍、cache读写机制的影响，标准库提供了对共享的`atomic`变量的`memory_order`支持。~~
 * ~~C++11中的内存模型可以在语言这样一个更高层面去控制多核处理器下多线程共享内存访问的控制，从而忽略编译器和硬件的影响提供跨平台的多线程访问控制，实现跨平台多线程。~~
-* `std::memory_order`对操作顺序的控制的具体实现是通过**内存屏障memory barrier**（FENCE）来进行的，memory barrier在不同CPU类型上表现不一定一致。
+* `std::memory_order`属于软件层面的抽象，对操作顺序的控制的具体实现是通过**内存屏障memory barrier**（FENCE/栅栏）来进行的，具体实现在不同CPU类型上表现不一定一致。
+* `std::memory_order`在实际实现上需要根据不同平台的实际情况插入合适的cpu指令来保证，总的来说就是编译器翻译成不同平台的cpu指令，而cpu在碰到这些指令时会执行附加操作保证内存序，在strong memory model的平台因为本身就有相对强的顺序保证，总体来说需要增加的指令较少，而weak memory order的平台则需要更多的指令来进行限制。[来源](https://blog.csdn.net/wxj1992/article/details/104266983)
 
 |         枚举值         |                             规则                             |
 | :--------------------: | :----------------------------------------------------------: |
@@ -395,7 +524,7 @@ std::atomic<std::shared_ptr<int>> x; // C++20
 
 ### 与硬件层面的一致性比较
 
-1. `std::memory_order`是C++在语言级别/软件级别提供的规则
+1. `std::memory_order`是C++在语言级别/软件级别提供的规则，定好了memory order剩下的事情编译器和cpu会给我们保证。
 
 ？？？？？？？？？？？？？？？？？？？
 
