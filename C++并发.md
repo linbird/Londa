@@ -1,4 +1,3 @@
-
 <!-- vim-markdown-toc GFM -->
 
 + [线程管理](#线程管理)
@@ -15,25 +14,28 @@
         - [限制调用](#限制调用)
 + [异常处理](#异常处理)
 + [数据共享](#数据共享)
-    * [互斥量mutex](#互斥量mutex)
-        - [OOP设计](#oop设计)
-        - [条件竞争与死锁](#条件竞争与死锁)
-            + [条件竞争](#条件竞争)
-            + [死锁](#死锁)
-                * [死锁避免](#死锁避免)
-    * [lock_guard<mutex>](#lock_guardmutex)
-    * [unique_lock](#unique_lock)
+    * [标准库提供的锁](#标准库提供的锁)
+        - [互斥量mutex](#互斥量mutex)
+            + [OOP设计](#oop设计)
+    * [条件竞争与死锁](#条件竞争与死锁)
+        - [条件竞争](#条件竞争)
+        - [死锁](#死锁)
+            + [死锁避免](#死锁避免)
+    * [管理锁](#管理锁)
+        - [lock_guard](#lock_guard)
+        - [unique_lock](#unique_lock)
 + [数据同步](#数据同步)
     * [等待事件](#等待事件)
         - [等待固定时间](#等待固定时间)
         - [等待条件满足](#等待条件满足)
-    * [feature](#feature)
+            + [条件变量](#条件变量)
+            + [协作机制](#协作机制)
+    * [异步执行](#异步执行)
         - [std::async](#stdasync)
         - [std::packaged_task](#stdpackaged_task)
-        - [future与promise](#future与promise)
-    * [shared_future](#shared_future)
-    * [函数式编程FP](#函数式编程fp)
-    * [CSP（Communicating Sequential Processer）](#cspcommunicating-sequential-processer)
+        - [future、promise、shared_future](#futurepromiseshared_future)
+            + [future与promise](#future与promise)
+            + [future与shared_future](#future与shared_future)
     * [std::experimental](#stdexperimental)
 + [时间与日期](#时间与日期)
     * [std::chrono](#stdchrono)
@@ -42,19 +44,44 @@
         - [time_point 时间点](#time_point-时间点)
     * [std::chrono_literals (c++14)](#stdchrono_literals-c14)
 + [内存模型与原子操作](#内存模型与原子操作)
-    * [标准原子类型](#标准原子类型)
-        - [注意事项](#注意事项)
-    * [其他原子类型](#其他原子类型)
+    * [内存模型](#内存模型)
+        - [背景](#背景)
+        - [内存模型](#内存模型-1)
+            + [C++中的对象和内存位置](#c中的对象和内存位置)
+            + [抽象内存模型](#抽象内存模型)
+        - [干预重排：Barrier](#干预重排barrier)
+            + [Compiler Barrier](#compiler-barrier)
+            + [Runtime Barrier](#runtime-barrier)
+    * [原子类型](#原子类型)
+        - [标准原子类型](#标准原子类型)
         - [指针原子类型std::atomic<T*>](#指针原子类型stdatomict)
         - [自定义原子类型](#自定义原子类型)
     * [原子操作支持](#原子操作支持)
+        - [标准库中原子类型的操作支持](#标准库中原子类型的操作支持)
         - [自由函数](#自由函数)
-    * [std::memory_order](#stdmemory_order)
-        - [问题背景](#问题背景)
-        - [**NOTE：**](#note-1)
-        - [与硬件层面的一致性比较](#与硬件层面的一致性比较)
+    * [memory_order](#memory_order)
+        - [顺序关系](#顺序关系)
+            + [sequenced-before](#sequenced-before)
+            + [happens-before](#happens-before)
+            + [synchronizes-with](#synchronizes-with)
+        - [六种memory_order](#六种memory_order)
+        - [三种内存模型](#三种内存模型)
+            + [Sequential Consistency](#sequential-consistency)
+            + [Release and Acquire](#release-and-acquire)
+            + [Relaxed](#relaxed)
+        - [注意事项](#注意事项)
+    * [Fence](#fence)
+        - [atomic_thread_fence](#atomic_thread_fence)
+        - [std::atomic_signal_fence](#stdatomic_signal_fence)
+        - [mutex与fence](#mutex与fence)
+        - [memory_order与fence](#memory_order与fence)
++ [Lock Free编程](#lock-free编程)
+    * [无锁编程范式](#无锁编程范式)
+        - [函数式编程FP](#函数式编程fp)
+        - [CSP（Communicating Sequential Processer）](#cspcommunicating-sequential-processer)
 + [高级线程管理](#高级线程管理)
     * [线程池](#线程池)
++ [并行算法(C++17)](#并行算法c17)
 
 <!-- vim-markdown-toc -->
 
@@ -75,7 +102,8 @@
 
 ### 线程运行
 
-* 线程开始运行的时间是不确定的，这是由操作系统的调度策略决定的。它可能在决定线程运行方式的代码执行前就已经完成了线程的任务。
++ 线程开始运行的时间是不确定的，这是由操作系统的调度策略决定的。它可能在决定线程运行方式的代码执行前就已经完成了线程的任务。
+
 1. thread::join():子线程会阻塞主线程的执行，只有当子线程结束后主线程才能继续执行。
 2. thread::datach():分离式启动线程，线程不会阻塞主线程的运行，子线程在后台运行，可用于创建守护线程。
 
@@ -93,8 +121,8 @@
 
 ### 线程结束
 
-* 当线程对象超出作用域时，由于RAII的特性，线程对象的析构函数会被自动调用。
-* 如果thread析构函数被调用时，线程对象还没有join()或者detach()，析构函数会调用`std::terminate()`从而导致进程异常退出。
++ 当线程对象超出作用域时，由于RAII的特性，线程对象的析构函数会被自动调用。
++ 如果thread析构函数被调用时，线程对象还没有join()或者detach()，析构函数会调用`std::terminate()`从而导致进程异常退出。
 
 ## 线程管理
 
@@ -102,15 +130,16 @@
 
 #### yield
 
-* 线程调用该方法时，主动让出CPU，并且不参与CPU的本次调度，从而让其他线程有机会运行。在后续的调度周期里再参与CPU调度。其让出的时间以CPU调度时间片为单位是不确定的，实现依赖于操作系统CPU调度策略，在不同的操作系统或者同一个操作系统的不同调度策略下，表现也可能是不同的。
++ 线程调用该方法时，主动让出CPU，并且不参与CPU的本次调度，从而让其他线程有机会运行。在后续的调度周期里再参与CPU调度。其让出的时间以CPU调度时间片为单位是不确定的，实现依赖于操作系统CPU调度策略，在不同的操作系统或者同一个操作系统的不同调度策略下，表现也可能是不同的。
 
 #### sleep_for
 
-* 让出CPU，并且休眠一段固定的(参数设置)时间，从而让其他线程有机会运行。等到休眠结束时，才参与CPU调度。
++ 让出CPU，并且休眠一段固定的(参数设置)时间，从而让其他线程有机会运行。等到休眠结束时，才参与CPU调度。
 
 ### 限制调用
 
-* call_once(once_flag*, ...)：限制任务只能被多个线程累计执行一次
++ call_once(once_flag*, ...)：限制任务只能被多个线程累计执行一次
+
 ```cpp
 void init() {} //此函数只会被执行一次
 
@@ -139,6 +168,7 @@ int main() {
 + 需要在多个线程中保持一致的值称为不变量，多个线运行情况下需要保证只能有一个线程(即修改不变量的线程)可以看见不变量的中间状态
 
 ## 标准库提供的锁
+
 |           锁            |             功能             |
 | :---------------------: | :--------------------------: |
 |         `mutex`         |           基本互斥           |
@@ -148,9 +178,9 @@ int main() {
 |     `shared_mutex`      |           共享互斥           |
 |  `shared_timed_mutex`   |       带超时的共享互斥       |
 
-* 超时：额外提供了`try_lock_for`和`try_lock_until`方法，如果在超时的时间范围内没有能获取到锁，则直接返回，不再继续等待。
-* 可重入/可递归：指在同一个线程中，同一把锁可以锁定多次。这就避免了一些不必要的死锁。
-* 共享：这类互斥体同时提供了共享锁和互斥锁。互斥锁失败完全排它（一旦某个线程获取了互斥锁，任何其他线程都无法再获取互斥锁和共享锁）；共享锁不完全排它（如果有某个线程获取到了共享锁，其他线程无法再获取到互斥锁，但是还能获取到共享锁）。对互斥锁的访问的接口同一般锁一样，对共享锁的访问通过`lock_shared()、try_lock_shared()、unlock_shared()`三个函数实现。
++ 超时：额外提供了`try_lock_for`和`try_lock_until`方法，如果在超时的时间范围内没有能获取到锁，则直接返回，不再继续等待。
++ 可重入/可递归：指在同一个线程中，同一把锁可以锁定多次。这就避免了一些不必要的死锁。
++ 共享：这类互斥体同时提供了共享锁和互斥锁。互斥锁失败完全排它（一旦某个线程获取了互斥锁，任何其他线程都无法再获取互斥锁和共享锁）；共享锁不完全排它（如果有某个线程获取到了共享锁，其他线程无法再获取到互斥锁，但是还能获取到共享锁）。对互斥锁的访问的接口同一般锁一样，对共享锁的访问通过`lock_shared()、try_lock_shared()、unlock_shared()`三个函数实现。
 
 ### 互斥量mutex
 
@@ -186,7 +216,7 @@ int main() {
 
 ## 管理锁
 
-* 为了避免需要手动管理互斥体，减少由于操作不当造成的问题。标准库基于RAII的编程技巧提供了自动化管理互斥体的类。
++ 为了避免需要手动管理互斥体，减少由于操作不当造成的问题。标准库基于RAII的编程技巧提供了自动化管理互斥体的类。
 
 |    管理类     |  标准  |                   特点                   |
 | :-----------: | :----: | :--------------------------------------: |
@@ -214,8 +244,6 @@ lock(*accountA->getLock(), *accountB->getLock());
 scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 ```
 
-
-
 ### lock_guard
 
 + 不可复制，不可移动转移所有权
@@ -242,7 +270,7 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 #### 条件变量
 
-* 当一个线程所需要的条件不满足时，线程会等待到条件满足时再执行。条件变量提供了一个可以让多个线程间同步协作的功能。
++ 当一个线程所需要的条件不满足时，线程会等待到条件满足时再执行。条件变量提供了一个可以让多个线程间同步协作的功能。
 
 |          条件变量           |                     说明                     |
 | :-------------------------: | :------------------------------------------: |
@@ -253,7 +281,8 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 #### 协作机制
 
-* 条件变量的`wait()`和`notify*()`共同构成了线程间互相协作的基础。
++ 条件变量的`wait()`和`notify*()`共同构成了线程间互相协作的基础。
+
 1. `wait()`：在等待的条件**未就绪时会==解锁==互斥量，并让当前线程继续等待**，只有就绪时线程才会继续执行。
 
 2. `notify_all()/ notify_one()`：将条件变量中由于调用`wait()`而等待的的所有或一个线程唤醒，被唤醒的线程会尝试获取互斥锁并再次判断条件是否满足。
@@ -272,7 +301,8 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
    ```
 
 ## 异步执行
-* 异步可以使耗时的操作不影响当前主线程的执行流，在线程内部再提高效率。标准库定义了以下数据结构以提供支持。
+
++ 异步可以使耗时的操作不影响当前主线程的执行流，在线程内部再提高效率。标准库定义了以下数据结构以提供支持。
 
   |        类         |                      作用                      |
   | :---------------: | :--------------------------------------------: |
@@ -303,15 +333,15 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 #### future与promise
 
-* `promise`可以和**一个**`future`关联绑定，两者配合可以实现一个通信机制（`future`阻塞线程等待数据，`promise`提供数据并将`future`置为就绪态）：
-  
++ `promise`可以和**一个**`future`关联绑定，两者配合可以实现一个通信机制（`future`阻塞线程等待数据，`promise`提供数据并将`future`置为就绪态）：
+
   1. 将`promise`对象传入到线程内部并在内部设置值，线程外部通过的`std::promise::get_future()`成获取与之相关的`std::future`对象的值。
-  
+
      ```cpp
      void f(std::promise<void> ps){
          ps.set_value();
      }
-     
+
      int main()
      {
          std::promise<void> ps;
@@ -323,7 +353,8 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
          return 0;
      }
      ```
-* 都支持传递线程内部的异常，`future`以自动抛出异常，`promise`需要借助`promise::set_exception()`函数。
+
++ 都支持传递线程内部的异常，`future`以自动抛出异常，`promise`需要借助`promise::set_exception()`函数。
 
 #### future与shared_future
 
@@ -332,40 +363,28 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 |  事件关联  |   只能与指定的事件关联   |                可以关联多个事件                 |
 | 结果所有权 | 独享可移动、只能获取一次 | 可拷贝，多个shared_future对象可以引用同一结果。 |
 
-## 无锁编程范式
-
-### 函数式编程FP
-
-* FP不会改变外部状态，不修改共享数据就不存在race condition，因此也就没有必要使用锁，可以实现无锁的算法
-
-### CSP（Communicating Sequential Processer）
-
-* CSP中的线程理论上是分开的，没有共享数据，但communication channel允许消息在不同线程间传递
-* 每个线程实际上是一个状态机，收到一条消息时就以某种方式更新状态，并且还可能发送消息给其他线程
-* 真正的CSP没有共享数据，所有通信通过消息队列传递，但由于C++线程共享地址空间，因此无法强制实现这个要求。[CSP实现ATM]()
-
 ## std::experimental
 
 # 时间与日期
 
-* C++的时钟库有两个版本，一个是std::chrono库，一个是C样式的日期和时间库(如std::time_t)。
++ C++的时钟库有两个版本，一个是std::chrono库，一个是C样式的日期和时间库(如std::time_t)。
 
 ## std::chrono
 
 ### clock 时钟
 
-* 标准库中提供了三种类型的时钟：
++ 标准库中提供了三种类型的时钟：
   1. std::chrono::system_clock：本地系统的当前时间 (可以调整)，静态成员函数to_time_t()支持风格转换
   2. std::chrono::steady_clock：不能被调整的，稳定增加的时间
   3. std::chrono::high_resolution_clock：提供最高精度的计时周期，不同标准库实现的行为有差异
-* 时钟类必须提供时间值、时间类型、时钟节拍和时钟稳定性**四种**信息
++ 时钟类必须提供时间值、时间类型、时钟节拍和时钟稳定性**四种**信息
 
 ### duration 时长
 
-* 表示时间间隔的模板类，模板参数为节拍数量(Rep)和节拍精度(std::ratio<Num, Denom=1>：表示Num/Denom秒)。
-* duration支持四则运算(基于时间的60进制)
-* 标准库定义了常用的duration和ratio，可以直接使用。
-* 标准库提供了duration_cast<TYPE>(soutrce)实现duration类型的转换。
++ 表示时间间隔的模板类，模板参数为节拍数量(Rep)和节拍精度(std::ratio<Num, Denom=1>：表示Num/Denom秒)。
++ duration支持四则运算(基于时间的60进制)
++ 标准库定义了常用的duration和ratio，可以直接使用。
++ 标准库提供了duration_cast\<TYPE>(soutrce)实现duration类型的转换。
 
 ```cpp
 std::chrono::nanoseconds    duration<long long, std::ratio<1, 1000000000>>
@@ -395,11 +414,13 @@ typedef ratio<      1000000000000000000, 1> exa;
 
 ### time_point 时间点
 
-* `std::chrono::time_point<clock, duration>`是一个表示距离时钟原点的具体时间点的类模板
-* 支持加减duration，支持相互之间相减（值为duration）。
++ `std::chrono::time_point<clock, duration>`是一个表示距离时钟原点的具体时间点的类模板
++ 支持加减duration，支持相互之间相减（值为duration）。
+
 ## std::chrono_literals (c++14)
 
-* std::chrono_literals通过字面运算符模板提供了时间的后缀支持。
++ std::chrono_literals通过字面运算符模板提供了时间的后缀支持。
+
 ```cpp
 constexpr std::chrono::minutes operator ""min(unsigned long long m){
     return std::chrono::minutes(m);
@@ -412,11 +433,104 @@ x == y;//true
 
 # 内存模型与原子操作
 
-## 标准原子类型
+## 内存模型
 
-* 定义在<atomic>头文件中的模板类，主要用于替代mutex实现同步
-* 每个原子类型拥有成员函数is_lock_free()用来判断该原子类型是否无锁(std::atomic_flag保证无锁)。
-* atomic<>模板类特化了常用的数据类型，通常类型std::atomic<T>的别名就是atomic_T，只有以下几种例外：signed缩写为s，unsigned缩写为u，long long缩写为llong
+[C++ memory order循序渐进（一）—— 多核编程中的lock free和memory model](https://blog.csdn.net/wxj1992/article/details/103649056?utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-2.control&dist_request_id=1619702544856_47901&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-2.control)
+
+[C++ memory order循序渐进（二）—— C++ memory order基本定义和形式化描述所需术语关系详解](https://blog.csdn.net/wxj1992/article/details/103656486?utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-4.control&dist_request_id=1619702589943_24614&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-4.control)
+
+[C++ memory order循序渐进（三）—— 原子变量上组合应用memory order实现不同的内存序](https://blog.csdn.net/wxj1992/article/details/103843971/?utm_medium=distribute.pc_relevant.none-task-blog-baidujs_title-0&spm=1001.2101.3001.4242)
+
+[C++ memory order循序渐进（四）—— 在std::atomic_thread_fence 上应用std::memory_order实现不同的内存序](https://blog.csdn.net/wxj1992/article/details/103917093?utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-1.control&dist_request_id=1619701584679_14980&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-1.control)
+
+[C++ memory order循序渐进（五）—— C++ memory order在编译器和cpu层面的具体实现](https://blog.csdn.net/wxj1992/article/details/104266983?utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7Edefault-9.control&dist_request_id=1619702600432_38181&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromBaidu%7Edefault-9.control)
+
+[C++ 内存模型](https://paul.pub/cpp-memory-model/)
+
+### 背景
+
+1. 在单线程中，由于编译器优化会执行会造成编译出的机器码出现指令重排，此时机器码的顺序和代码的逻辑顺序不同，这种重排不会影响单线程的执行正确性（编译器分析代码时可以确定单线程下的数据读写以及数据之间的依赖关系。但是编译器按照单线程优化的代码在多线程下可能会引发错误（**编译器并不知道哪些数据是在线程间共享，而且是有可能会被修改的**）。![编译重排](img/concurrency/reorder.png)
+
+2. CPU部件为了提高效率，在执行指令时使用了乱序、多发射等技术，这也会导致机器码中的指令执行顺 序和机器码顺序不同。![执行重排](img/concurrency/out-of-order-execution.png)
+
+3. 当提升单核能力来提高CPU性能的路越走越窄时，多核架构逐渐成为一条新的道路，多核中各核心都有自己的cache，还有不同层级的cache，彼此共享内存。每个CPU核在运行的时候，都会优先考虑离自己最近的Cache，一旦命中就直接使用Cache中的数据，每一层之间的Cache，数据常常是不一致的，而CPU去同步这些数据是需要消耗时间的。这就会造成某个CPU核修改了一个数据，没有同步的让其他核知道（CPU层面使用的是一套包括MESI协议、store buffer、invalid queue等技术在内的数据同步方式）时又有其他核也要访问同一块内存，于是多个核心上的cache就存在了数据不一致的情况，必须等待CPU上的硬件算法完成数据的同步。
+
+   ![多核下的一种cache架构](./img/concurrency/layer-cache.png)
+
++ 由于以上这些原因CPU所运行的程序和我们编写的代码可能是不一致的，甚至，对于同一次执行，不同线程感知到其他线程的执行顺序可能都是不一样的。因此内存模型需要考虑到所有这些细节，以便让开发者可以精确控制以避免未定义的行为。
+
+### 内存模型
+
+#### C++中的对象和内存位置
+
++ C++内存模型中的基本存储单位是字节。C++中所有数据都是由对象（基本类型+指针类型+定义的类对象）组成的。每个对象均包含了一个或多个内存位置（字节寻址）[参考](https://paul.pub/cpp-memory-model/#id-%E5%AF%B9%E8%B1%A1%E5%92%8C%E5%86%85%E5%AD%98%E4%BD%8D%E7%BD%AE)。
+
+```cpp
+struct S {
+ char a;        // 内存位置 #1
+ int b : 5;     // 内存位置 #2
+    int c : 11,    // 内存位置 #2 （接续，相邻位域占用同一个内存位置）
+    : 0,     // 无名位域，它指定类定义中的下个位域将始于分配单元的边界。
+  d : 8;     // 内存位置 #3 （由于存在0值无名位域，这里是一个新的内存位置）
+    struct {
+        int ee : 8; // 内存位置 #4
+    } e;
+} obj;
+```
+
++ 如果多个线程各自访问的是不同的内存位置不会出现问题，但是当多个线程访问同一个内存位置，并且其中只要有一个线程包含了写操作，如果这些访问没有一致的修改顺序，那么结果就是未定义的。
+
+#### 抽象内存模型
+
++ 对内存的操作归根结底只有load和store两种操作，指令重拍也就只有四种：
+
+ 1. Loadload：重拍两个读操作
+ 2. Loadstore：将写之前的读操作重排到写之后
+ 3. Storeload：将读之前的写操作重排到读之后
+ 4. Storestore：重排两个写操作
+
++ 上述四种重排是否出现就决定了对应内存模型的强弱程度，由于重排会发生在软件和硬件两个层面，所以内存模型也就有软件和硬件两个层面。
+
++ 内存模型定义了特定处理器上或者工具链上对指令的重排情况（原则是**不能修改单线程的行为**），代码和指令的重排会严格遵守对应的内存模型。以下是几种CPU层面的内存模型分类。
+
+  ![几种CPU层面的内存模型](./img/concurrency/weak-strong.png)
+
++ 在上图中DEC Alpha平台上四种重排都会发生。x86的内存模型叫做x86-TSO（Total Store Order），这可能是目前处理器中最强的内存模型之一。主流的CPU都没有在硬件层面上提供Sequential Consistency(没有重排，代价大效率低且无必要)。
+
+### 干预重排：Barrier
+
++ 为了兼顾指令重拍带来的效率提升和阻止乱序执行可能造成的错误，有时必须对指令重排进行干预。CPU和编译器为这样的需求提供了屏障Barrier这样一个抽象的手段(软件层面)。
+
+#### Compiler Barrier
+
++ 用来限制编译阶段的重排
++ GCC编译器下在代码中插入`asm volatile("" ::: “memory”)`就是一个Compiler Barrier
+
+#### Runtime Barrier
+
++ 通过特定的CPU 指令来限制运行阶段的重排
+
+1. Loadload barrier：保证barrier前的读操作比barrier后的读操作先完成。
+2. Loadstore barrier：保证barrier前的读操作比barrier后的写操作先完成。
+3. Storeload barrier：保证barrier前的写操作比barrier后的读操作先完成。
+4. Storestore barrier：保证barrier前的写操作比barrier后的写操作先完成。
+
+## 原子类型
++ 多线程读写同一变量需要使用同步机制，最常见的同步机制就是`std::mutex`和`std::atomic`，其中`atomic`通常提供更好的性能。
++ 定义在atomic头文件中的模板类，主要用于替代mutex实现同步
+
+* **注意事项**
+
+1. 所有原子类型都**不支持拷贝和赋值**，因为该操作涉及了两个原子对象（对于两个不同的原子对象上单一操作不可能是原子的）。但可以用对应的内置类型或者提供的成员函数赋值。
+2. std::atomic_flag是一个原子布尔类型，也是唯一一个保证无锁的原子类型，只支持ATOM_FLAG_INIT宏初始化为clear()状态，且只支持在set()和clear()之间转换。
+3. 规范要求`atomic_flag`的原子操作都是免锁的，其他类型是否免锁与具体的平台有关。
+4. 原子操作并**不一定能提高性能**，只有在没有任何竞争或只被一个线程访问的原子操作是才比较快的，当原子操作需要等待CPU的MESI等硬件算法完成一致性同步时，这个复杂的硬件算法使得原子操作会变得很慢。
+
+### 标准原子类型
+
++ atomic<>模板类特化了常用的数据类型，通常类型std::atomic\<T>的别名就是atomic_T，只有以下几种例外：signed缩写为s，unsigned缩写为u，long long缩写为llong
+
+
 ```cpp
 namespace std {
     using atomic_bool = atomic<bool>;
@@ -430,60 +544,52 @@ namespace std {
     using atomic_ullong = std::atomic<unsigned long long>;
 }
 ```
-### 注意事项
 
-1. 原子类型不允许由另一个原子类型拷贝赋值，但可以用对应的内置类型或者提供的成员函数赋值。
-```cpp
-T operator=(T desired) noexcept;
-T operator=(T desired) volatile noexcept;
-atomic& operator=(const atomic&) = delete;
-atomic& operator=(const atomic&) volatile = delete;
-
-std::atomic<T>::store // 替换当前值
-std::atomic<T>::load // 返回当前值
-std::atomic<T>::exchange // 替换值，并返回被替换前的值
-
-// 与期望值比较，不等则将期望值设为原子值并返回false
-// 相等则将原子值设为目标值并返回true
-// 在缺少CAS（compare-and-exchange）指令的机器上，weak版本在相等时可能替换失败并返回false
-// 因此weak版本通常要求循环，而strong版本返回false就能确保不相等
-std::atomic<T>::compare_exchange_weak
-std::atomic<T>::compare_exchange_strong
-
-std::atomic<T>::fetch_add // 原子加法，返回相加前的值
-std::atomic<T>::fetch_sub
-std::atomic<T>::fetch_and
-std::atomic<T>::fetch_or
-std::atomic<T>::fetch_xor
-std::atomic<T>::operator++ // 前自增等价于fetch_add(1)+1
-std::atomic<T>::operator++(int) // 后自增等价于fetch_add(1)
-std::atomic<T>::operator-- // fetch_sub(1)-1
-std::atomic<T>::operator--(int) // fetch_sub(1)
-std::atomic<T>::operator+= // fetch_add(x)+x
-std::atomic<T>::operator-= // fetch_sub(x)-x
-std::atomic<T>::operator&= // fetch_and(x)&x
-std::atomic<T>::operator|= // fetch_or(x)|x
-std::atomic<T>::operator^= // fetch_xor(x)^x
-```
-2. std::atomic_flag是一个原子布尔类型，也是唯一一个保证无锁的原子类型，只支持ATOM_FLAG_INIT宏初始化为clear()状态，且只支持在set()和clear()之间转换。
-
-## 其他原子类型
 
 ### 指针原子类型std::atomic<T*>
 
 ### 自定义原子类型
 
-* 该自定义类型必须[可平凡复制](https://zh.cppreference.com/w/cpp/named_req/TriviallyCopyable) (使用`std::is_trivially_copyable`校验, 通俗的说，就是可以直接按字节拷贝的结构称)。
-* 自定义类型的原子类型不允许运算操作，只允许`is_lock_free、load、store、exchange、compare_exchange_weak`和`compare_exchange_strong`，以及赋值操作和向自定义类型转换的操作o
++ 该自定义类型必须[可平凡复制](https://zh.cppreference.com/w/cpp/named_req/TriviallyCopyable) (使用`std::is_trivially_copyable`校验, 通俗的说，就是可以直接按字节拷贝的结构称)。
++ 自定义类型的原子类型不允许运算操作，只允许`is_lock_free、load、store、exchange、compare_exchange_weak`和`compare_exchange_strong`，以及赋值操作和向自定义类型转换的操作o
 
 ## 原子操作支持
 
-* **原子操作**就是对一个内存上变量（或者叫左值）的读取-变更-存储（load-add-store）作为一个整体一次完成。
++ **原子操作**就是对一个内存上变量（或者叫左值）的读取-变更-存储（load-add-store）作为一个整体一次完成。cpu保证没有线程能观察到原子操作的中间态，也就是对于一个原子操作，对于所有的线程来说要么做了要么没做。
+
+### 标准库中原子类型的操作支持
+
+|           函数            | 操作类型 |        功能        | atom_flag | atom_bool | 原子指针 | 原子整形 |
+| :-----------------------: | :------: | :----------------: | :-------: | :-------: | :------: | :------: |
+|      `test_and_set`       |  R-M-W   | 设为true并返回旧值 |    Yes    |           |          |          |
+|          `clear`          |    W     |     设为false      |    Yes    |           |          |          |
+|      `is_lock_free`       |    R     |    检查免锁支持    |           |    Yes    |   Yes    |   Yes    |
+|          `load`           |    R     |       读变量       |           |    Yes    |   Yes    |   Yes    |
+|          `store`          |    W     |       写变量       |           |    Yes    |   Yes    |   Yes    |
+|        `exchange`         |  R-M-W   |  替换值并返回旧值  |           |    Yes    |   Yes    |   Yes    |
+|  `compare_exchange_weak`  |  R-M-W   |                    |           |    Yes    |   Yes    |   Yes    |
+| `compare_exchange_strong` |  R-M-W   |                    |           |    Yes    |   Yes    |   Yes    |
+|     `fetch_add、 +=`      |  R-M-W   |                    |           |           |   Yes    |   Yes    |
+|     `fetch_sub、 -=`      |  R-M-W   |                    |           |           |   Yes    |   Yes    |
+|         `++、- -`         |  R-M-W   |                    |           |           |   Yes    |   Yes    |
+|      `fetch_add、&=`      |  R-M-W   |                    |           |           |          |   Yes    |
+|      `fetch_or、|=`       |  R-M-W   |                    |           |           |          |   Yes    |
+|      `fetch_xor、^=`      |  R-M-W   |                    |           |           |          |   Yes    |
+
+* `load、store、exchange`使用和返回的都不是原子类型的值。
+
+* 所有**命名函数（例如：`fetch_add`, `fetch_or`）返回的是修改前的值**。而**复合赋值运算符（例如：`+=`, `|=`）返回的是修改后的值**。
+
+* `compare_exchange_weak` 和 `compare_exchange_strong`都接受`T& expected`和`T desired`两个输入值。函数会比较原子变量实际值和所提供的预计值，相等则更新原子变量值为期望值，否则保持原子变量值不变，如果原子变量值发生了变化返回true，否则返回false。`compare_exchange_weak`在缺少单个[比较交换指令](https://en.wikipedia.org/wiki/Compare-and-swap)的机器上可能会出现伪失败（原始值等于预计值时返回False）。
+
 
 ### 自由函数
-* 除了每个类型各自的成员函数，原子操作库还提供了通用的自由函数(函数名多了一个atomic_前缀，参数变为指针类型)
+
++ 除了每个类型各自的成员函数，原子操作库还提供了自由函数(函数名多了一个atomic_前缀，**参数仅为指针**类型)
+
 1. 除`std::atomic_is_lock_free`外，每个自由函数有一个`_explicit`后缀版本，`_explicit`自由函数额外接受一个`std::memory_order`参数
 2. 自由函数不仅可用于原子类型，还为std::shared_ptr提供了特化版本(C++20弃用了特化，直接允许std::atomic的模板参数为std::shared_ptr)
+
 ```cpp
 std::atomic<int> i(42);
 int j = std::atomic_load(&i); // 等价于i.load()
@@ -496,18 +602,34 @@ std::atomic_store(&q, p);
 std::atomic<std::shared_ptr<int>> x; // C++20
 ```
 
-## std::memory_order
+## memory_order
 
-### 问题背景
-* 多线程读写同一变量需要使用同步机制，最常见的同步机制就是`std::mutex`和`std::atomic`，其中`atomic`通常提供更好的性能。但在指令的执行过程中还面临以下问题：
-    1. 在单线程中，由于编译器优化会执行会造成编译出的机器码出现指令重排，此时机器码的顺序和代码的逻辑顺序不同。
-    2. CPU部件为了提高效率，在执行指令时使用了乱序、多发射等技术，这也会导致机器码中的指令执行顺 序和机器码顺序不同。
-    3. 在多核心的CPU上由于cache的设计，不同核心的cache数据可能不同。
-* 为了兼顾指令重拍带来的效率提升和阻止乱序执行可能造成的错误，需要手动限制编译器以及CPU对单线程当中的指令执行顺序进行重排的程度，于是引入了`std::memory_order`。
-* ~~为了控制多核CPU上对共享的同一个原子变量操作的顺序，消除指令重拍、cache读写机制的影响，标准库提供了对共享的`atomic`变量的`memory_order`支持。~~
-* ~~C++11中的内存模型可以在语言这样一个更高层面去控制多核处理器下多线程共享内存访问的控制，从而忽略编译器和硬件的影响提供跨平台的多线程访问控制，实现跨平台多线程。~~
-* `std::memory_order`属于软件层面的抽象，对操作顺序的控制的具体实现是通过**内存屏障memory barrier**（FENCE/栅栏）来进行的，具体实现在不同CPU类型上表现不一定一致。
-* `std::memory_order`在实际实现上需要根据不同平台的实际情况插入合适的cpu指令来保证，总的来说就是编译器翻译成不同平台的cpu指令，而cpu在碰到这些指令时会执行附加操作保证内存序，在strong memory model的平台因为本身就有相对强的顺序保证，总体来说需要增加的指令较少，而weak memory order的平台则需要更多的指令来进行限制。[来源](https://blog.csdn.net/wxj1992/article/details/104266983)
++ 为了更好的提供多线程支持，C++11引入`std::memory_order`提供一种**通过原子变量限制内存序**的手段来干预指令的重排，它会影响**原子操作周围的所有内存访问**顺序。
++ 定义好memory order后的工作由编译器和cpu完成：其具体实现是通过**内存屏障memory barrier（FENCE/栅栏）**来进行的，代码在不同平台上会插入合适的[同步屏障](https://www.wikiwand.com/zh-hans/同步屏障)指令来保证内存序（**在memory barrier 之前的指令和memory barrier之后的指令不会由于系统优化等原因而导致乱序**）。在strong memory model的平台需要增加的指令较少（平台本身就有相对强的顺序保证），而weak memory order的平台需要更多的指令来进行限制。[来源](https://blog.csdn.net/wxj1992/article/details/104266983)
+
+### 顺序关系
+
++ 对于两个**语句**A和B，C++对A和B的访问顺序定义了以下几种关系（A relationship B）：
+
+#### sequenced-before
+
++ 一种**单线程上的关系**，这是一个**非对称，可传递**的成对关系。
++ 满足此关系则A在B之前执行且B可以看到A的执行结果。
+
+#### happens-before
+
++ 对sequenced-before的拓展，包含了单线程（此时即sequenced-before）和多线程下的关系。是一个**非对称，可传递**的关系。
++ 满足此关系则A对内存的修改将在B操作执行之前就可见（为线程间的数据访问提供了保证）。
+
+#### synchronizes-with
+
++ 是一种**运行时的同步关系**，描述对内存的修改操作（包括原子和非原子操作）对其他线程可见
+
++ 满足此关系则保证操作A之前的内存修改对B之后都可见。
+
+  ![运行时同步关系](img/concurrency/synchronizes-with.png)
+
+### 六种memory_order
 
 |         枚举值         |                             规则                             |
 | :--------------------: | :----------------------------------------------------------: |
@@ -515,23 +637,232 @@ std::atomic<std::shared_ptr<int>> x; // C++20
 | `memory_order_release` | 本线程中所有之前的原子写操作完成后才能执行本条原子操作（**我后写**） |
 | `memory_order_acquire` | 本线程中所有之后的原子读操作只有在本条原子操作完成后才能执行（**我先读**） |
 | `memory_order_acq_rel` |                 同时满足`acquire`和`release`                 |
-| `memory_order_consume` | 本线程中所有后续与**本原子变量**相关的原子操作只有在本条原子操作完成后执行 |
-| `memory_order_seq_cst` |   默认控制，全部原子操作遵循代码顺序，**不允许重排、乱序**   |
+| `memory_order_consume` | 本线程中所有后续**本原子变量**相关的原子操作只有在本条原子操作完成后执行，**不推荐** |
+| `memory_order_seq_cst` |   默认控制，全部原子操作遵循代码顺序，**不允许重排和乱序**   |
+* 原子类型的成员函数支持的有意义的memory_order如下：
 
-### **NOTE：**
-1. `memory_order_consume`仅仅考虑对一个`atomic`数据的读写顺序。而其他几种内存顺序都是在操控/安排多个`atomic`数据之间的读写顺序。
-2. C++11所规定的这6种模式，**它本身与多线程无关，是限制的单一线程当中指令执行顺序**。这是由于在单线程的环境下指令重拍不会造成逻辑错误（指令重拍的原则是不冲突才会重排，CPU乱序发射但有序写回，详见计算机体系结构），但在多线程下由于数据的共享乱序可能造成逻辑错误，所以需要**限制单线程下的指令重排以避免多线程环境下出现的问题**。
+  |   操作类型    |                     有意义参数                      |
+  | :-----------: | :-------------------------------------------------: |
+  |  Read / Load  | `memory_order_{relaxed、consume、acquire、seq_cst}` |
+  | Write / Store |     `memory_order_{relaxed、release、seq_cst}`      |
+  |     R-M-W     |     `memory_order_{relaxed、acq_rel、seq_cst}`      |
 
-### 与硬件层面的一致性比较
+### 三种内存模型
 
-1. `std::memory_order`是C++在语言级别/软件级别提供的规则，定好了memory order剩下的事情编译器和cpu会给我们保证。
+* 当多个线程中包含了多个原子操作，而这些原子操作的memory_order的选择不一样时将导致运行时不同的内存模型强度。
 
-？？？？？？？？？？？？？？？？？？？
+#### Sequential Consistency
+
+顺序一致性模型，默认模型，最严格的内存模型，它将提供以下保证：
+
+1. 程序指令与源码顺序一致（所有关于原子操作的代码都不会被乱序）
+2. 所有线程的所有操作存在一个全局的顺序。
+
+```cpp
+std::atomic<bool> x,y;
+std::atomic<int> z;
+
+void write_x_then_y(){
+    x.store(true); // ①
+    y.store(true); // ②
+}
+
+void read_y_then_x(){
+    while(!y.load()); // ③
+    if(x.load()) // ④
+        ++z; // ⑤
+}
+
+int main(){
+    x.store(false), y.store(false), z.store(0);
+    std::thread a(write_x_then_y), b(read_y_then_x);
+    a.join();
+    b.join();
+    assert(z.load()!=0); // ⑥
+}
+/*
+① happens-before ②
+② happens-before ③
+③ happens-before ④
+最终顺序：①②③④
+*/
+```
+
+![代码运行时序图](img/concurrency/Sequence-diagram-seq .png)
+
+#### Release and Acquire
+
+线程A和B**在运行时**，如果线程A对一个原子操作采用`memory_order_release`，线程B对同一个原子变量的原子操作为`memory_order_acquire`，线程之间的读写才**可能建立Synchronizes-with关系**。
+
+![运行时建立了同步关系](img/concurrency/synchronizes-with.png)
+
+![运行时未建立同步关系](img/concurrency/no-synchronizes-with.png)
+
+满足synchronizes-with关系的模型不再有全局的一致顺序，同时该模型保证：
+
+1. 对同一个对象的多个原子操作不会被打乱
+2. release操作禁止了所有在它之前的读写操作与在它之后的写操作乱序
+3. acquire操作禁止了所有在它之前的读操作与在它之后的读写操作乱序
+
+```cpp
+std::atomic<bool> x,y;
+std::atomic<int> z;
+
+void write_x_then_y(){
+    x.store(true, std::memory_order_relaxed); // ①
+    y.store(true, std::memory_order_release); // ②
+}
+
+void read_y_then_x(){
+    while(!y.load(std::memory_order_acquire)); // ③
+    if(x.load(std::memory_order_relaxed))	   // ④
+        ++z;
+}
+
+int main(){
+    x.store(false), y.store(false), z.store(0);
+    std::thread a(write_x_then_y), b(read_y_then_x);
+    a.join();
+    b.join();
+    assert(z.load()!=0); // ⑤
+}
+/*
+①happens-before②
+②synchronized-with③
+③happens-before④
+最终顺序：①②③④
+*/
+```
+![代码运行时序图](img/concurrency/Sequence-diagram-rel-acq.png)
+
+#### Relaxed
+
+最弱的内存模型，此模型保证：
+
+1. 仅仅是保证原子操作自身的原子性，所有原子操作不存在一个全局顺序（线程内部有happens-before规则）
+```cpp
+std::atomic<bool> x,y;
+std::atomic<int> z;
+
+void write_x_then_y(){
+    x.store(true, std::memory_order_relaxed); // ①
+    y.store(true, std::memory_order_relaxed); // ②
+}
+
+void read_y_then_x(){
+    while(!y.load(std::memory_order_relaxed)); // ③
+    if(x.load(std::memory_order_relaxed)) // ④
+        ++z;  // ⑤
+}
+
+int main(){
+    x.store(false), y.store(false), z.store(0);
+    std::thread a(write_x_then_y), b(read_y_then_x);
+    a.join();
+    b.join();
+    assert(z.load()!=0); // ⑥
+}
+/*
+线程A最终表现：①②
+线程B最终表现：③④
+从原子变量y的角度来看，这段代码的逻辑保证了顺序 ②③④，但是A中的顺序并不会同步到线程B中，此时线程B看到的执行顺序可能是②③④①、①②③④、②①③④，线程A和B不存在统一的访问顺序
+*/
+```
+![代码运行时序图](img/concurrency/Sequence-diagram-relaxed .png)
+
+### 注意事项
+
+1. `memory_order_consume`仅仅考虑对一个`atomic`数据的读写顺序（C++17修改了其语义，因此不推荐使用）。而其他几种内存顺序都是在操控/安排多个`atomic`数据之间的读写顺序。
+2. C++11所规定的这6种模式，**它本身与多线程无关，是限制的单一线程当中指令执行顺序**。这是由于在单线程的环境下指令重拍不会造成逻辑错误（没有依赖的指令才会重排，CPU乱序发射但有序写回，详见计算机体系结构），但在多核心多线程下由于数据的共享，指令重排和乱序执行时内存数据的同步顺序和代码顺序不一致而造成逻辑错误，所以需要**限制单线程下的指令重排以避免多线程环境下出现的问题**。
+
+## Fence
+
+从C++11开始，C++提供了`std::atomic_thread_fence`（在线程间进行数据访问的同步）和`std::atomic_signal_fence`（线程和信号处理器间的同步）两种机制控制乱序优化。fence可以和原子操作组合进行同步，也可以fence之间进行同步，fence不光可以不依赖原子操作进行同步，而且相比较于同样memory order的原子操作，具有更强的内存同步效果。
+
+### atomic_thread_fence
+
+1.  **full fence**：将参数指定为`memory_order_seq_cst`或者`memory_order_acq_rel`。![full fence](img/concurrency/full_fence.png)
+
+2.  **acquire fence**：将参数指定为`memory_order_acquire`或`memory_order_consume`，阻止它之前的读操作和之后的读写操作的乱序（**先读**）。![full fence](img/concurrency/acquire_fence.png)
+
+3.  **release fence**：将参数指定为`memory_order_release`，阻止它之前的读写操作和之后的写操作的乱序（**后写**）。![full fence](img/concurrency/release_fence.png)
+
+* 这三种fence都不会阻止先写后读的重排
+
+  ```cpp
+  std::atomic<bool> x,y;
+  std::atomic<int> z;
+
+  void write_x_then_y(){
+      x.store(true, std::memory_order_relaxed); // ①
+      std::atomic_thread_fence(std::memory_order_release);
+      y.store(true, std::memory_order_relaxed); // ②
+  }
+
+  void read_y_then_x(){
+      while(!y.load(std::memory_order_relaxed)); // ③
+      std::atomic_thread_fence(std::memory_order_acquire);
+      if(x.load(std::memory_order_relaxed))
+          ++z;  // ④
+  }
+
+  int main(){
+      x.store(false), y.store(false), z.store(0);
+      std::thread a(write_x_then_y), b(read_y_then_x);
+      a.join();
+      b.join();
+      assert(z.load()!=0); // ⑥
+  }
+  /*
+  线程A：①②
+  线程B：③④
+  代码的逻辑保证了顺序 ②③④，两个fence限制了线程A和线程B内部的重排。
+  最终顺序：①②③④
+  */
+  ```
+
+### std::atomic_signal_fence
+
+### mutex与fence
+
+由于临界区内的代码不会被优化到临界区之外（反之不然），所以mutex也可以在语句间起到fence的作用，如下图中第一种可能会被优化成第二种。但是第二种情况不会被优化成第三种：![mutex和fence](img/concurrency/mutex-fence.png)
+
+### memory_order与fence
+
+1. fence的同步效果要强于基于原子操作的同步，同时在weak memory order平台的开销也会更大。
+2.
+
+# Lock Free编程
+
++ lock free经常被中译为无锁编程，从而造成没有使用锁的程序就是无锁编程这样一个错误概念。无锁编程只需要满足一项要求：如果涉及到共享内存的多线程代码在多线程执行下不可能由于互相影响导致被阻塞住，不管OS如何调度线程**至少有一个线程在做有用的事**就是lock-free。![what is lock free](./img/concurrency/lock-free.png)
++ **NOTE**：lock free(代码通常更复杂难以理解)不一定优于使用锁的方式，他们在应用场景上更多的是一种互补的关系。lock-free算法的价值在于其保证了一个或所有线程始终在做有用的事，而不是绝对的高性能。但lock-free相较于锁在并发度高（竞争激烈导致上下文切换开销变得突出）的某些场景下会有很大的性能优势，总的来说，在多核环境下，lock-free是很有意义的。
+
+## 无锁编程范式
+
+### 函数式编程FP
+
++ FP不会改变外部状态，不修改共享数据就不存在race condition，因此也就没有必要使用锁，可以实现无锁的算法
+
+### CSP（Communicating Sequential Processer）
+
++ CSP中的线程理论上是分开的，没有共享数据，但communication channel允许消息在不同线程间传递
++ 每个线程实际上是一个状态机，收到一条消息时就以某种方式更新状态，并且还可能发送消息给其他线程
++ 真正的CSP没有共享数据，所有通信通过消息队列传递，但由于C++线程共享地址空间，因此无法强制实现这个要求。[CSP实现ATM](no link)
 
 # 高级线程管理
 
 ## 线程池
-* 线程的创建和销毁都是需要时间的，当任务的计算时间在线程的生命期中占比较少且任务较多时，为了避免反复创建和释放线程的代价，引入线程池实现。在线程池中线程结束任务后并不被释放而是等待执行下一个任务，以此来避免线程的重复创建与销毁。
-* 线程池一般主要由任务队列和工作线程队列构成。任务队列负责存放主线程需要处理的任务，工作线程队列负责从任务队列中取出和运行任务。
-* C++目前为止没有提供线程池的支持，需要自己实现[实现参考](https://wangpengcheng.github.io/2019/05/17/cplusplus_theadpool/) 。
-*
+
++ 线程的创建和销毁都是需要时间的，当任务的计算时间在线程的生命期中占比较少且任务较多时，为了避免反复创建和释放线程的代价，引入线程池实现。在线程池中线程结束任务后并不被释放而是等待执行下一个任务，以此来避免线程的重复创建与销毁。
++ 线程池一般主要由任务队列和工作线程队列构成。任务队列负责存放主线程需要处理的任务，工作线程队列负责从任务队列中取出和运行任务。
++ C++目前为止没有提供线程池的支持，需要自己实现[实现参考](https://wangpengcheng.github.io/2019/05/17/cplusplus_theadpool/) 。
+
+# 并行算法(C++17)
+
++ 标准库将许多算法加入了sequenced_policy参数已启用算法的并行版本。[参考来源](https://paul.pub/cpp-concurrency)
+
+|          变量          |                   类型                   |                 作用                 |
+| :--------------------: | :--------------------------------------: | :----------------------------------: |
+|    `execution::seq`    |      `execution::sequenced_policy`       |    要求并行算法的执行可以不并行化    |
+|    `execution::par`    |       `execution::parallel_policy`       |     指示并行算法的执行可以并行化     |
+| `execution::par_unseq` | `execution::parallel_unsequenced_policy` | 指示并行算法的执行可以并行化、向量化 |
