@@ -87,6 +87,52 @@
 
 # 线程管理
 
+## 线程本地存储TLS
+
+TLS是一种**存储期(storage duration)**控制符，该类型对象在线程开始时分配并初始化（仅一次）、线程结束时回收，每个线程有该对象自己的实例副本，在和static或extern结合时会影响变量的链接属性。
+
+### thread_local
+
+命名空间下的全局变量，类的**static成员**变量，本地变量支持被申明为thread_local变量。**`static thread_local` 和 `thread_local` 声明是等价的**。
+
+```cpp
+thread_local int x;  //命名空间下的全局变量
+
+class X{
+    static thread_local std::string s; //类的static成员变量
+};
+static thread_local std::string X::s;  //类的static成员变量
+
+void foo(){
+    thread_local std::vector<int> v;  //本地变量
+}
+
+class A {
+    public:
+        A(){ std::cout << std::this_thread::get_id() << " " << __FUNCTION__ << "(" << (void *)this << ")" << std::endl;}
+        ~A(){ std::cout << std::this_thread::get_id() << " " << __FUNCTION__ << "(" << (void *)this << ")" << std::endl;}
+        void doSth() {}
+};
+thread_local A a;
+int main() {
+    a.doSth();
+    std::thread t([]() {
+            std::cout << "Thread: " << std::this_thread::get_id() << " entered" << std::endl;
+            a.doSth();});//线程创建a的副本
+    t.join();
+    return 0;
+}
+/* 变量a在main线程和t线程中分别保留了一份副本，每个副本的生命期绑定到线程的生命期
+139649599244096 A(0x7f02b4c1873e)
+Thread: 139649599239744 entered
+139649599239744 A(0x7f02b4c1763e)
+139649599239744 ~A(0x7f02b4c1763e)
+139649599244096 ~A(0x7f02b4c1873e)
+*/
+```
+
+
+
 ## thread对象
 
 + C++11使用thread类来作为存储和管理线程数据的数据结构。
@@ -341,7 +387,7 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
      void f(std::promise<void> ps){
          ps.set_value();
      }
-
+      
      int main()
      {
          std::promise<void> ps;
@@ -792,20 +838,20 @@ int main(){
   ```cpp
   std::atomic<bool> x,y;
   std::atomic<int> z;
-
+  
   void write_x_then_y(){
       x.store(true, std::memory_order_relaxed); // ①
       std::atomic_thread_fence(std::memory_order_release);
       y.store(true, std::memory_order_relaxed); // ②
   }
-
+  
   void read_y_then_x(){
       while(!y.load(std::memory_order_relaxed)); // ③
       std::atomic_thread_fence(std::memory_order_acquire);
       if(x.load(std::memory_order_relaxed))
           ++z;  // ④
   }
-
+  
   int main(){
       x.store(false), y.store(false), z.store(0);
       std::thread a(write_x_then_y), b(read_y_then_x);
