@@ -1,4 +1,4 @@
-
+​	
 
 # 设计哲学
 
@@ -24,13 +24,13 @@
 1. 应用程序通过文件操作函数（`open()、close()、read()、write()、ioctl()`）调用VFS提供的系统调用函数接口(`sys_open()、sys_close()、sys_read()、sys_write()、sys_ioctl()`)同VFS进行交互。
 2. VFS通过驱动程序提供的`file_operation`接口同设备驱动进行交互（驱动层的`file_operations`方法的屏蔽了不同类型设备的底层操作方法的差异）
 
-![虚拟文件系统层](img/OS/VFS.JPEG)
+![虚拟文件系统层](img/Linux/VFS.JPEG)
 
 ## 数据结构
 
 VFS主要通过四个主要的结构体实现抽象层，每个结构体包含了指向该结构体支持的方法列表的指针。
 
-![VFS中超级块、挂载点以及文件系统的关系](/run/media/linbird/79a60176-120e-4b69-b805-79ebe446d5e9/linbird/Londa/img/OS/vfs.jpg)
+![VFS中超级块、挂载点以及文件系统的关系](./img/Linux/vfs.jpg)
 
 ### 超级块对象 super block
 
@@ -59,7 +59,7 @@ VFS主要通过四个主要的结构体实现抽象层，每个结构体包含�
 
 ## 进程与VFS
 
-![VFS内部的组织逻辑](img/OS/how-organize.png)
+![VFS内部的组织逻辑](img/Linux/how-organize.png)
 
 内核通过进程的`task_struct`中的`files`域指针找到**`file_struct`结构体**，该结构体包含了一个由`file *`构成的**已打开文件描述符表**，表中的每一个指针指向VFS中文件列表中的**文件对象**。
 
@@ -110,22 +110,22 @@ Linux将所有的执行实体都称之为任务Task（Task是进程概念在Linu
 
 为了满足速度与容量的需求，现代计算机系统都采用了多级金字塔的存储结构。在该结构中上层一般作为下层的Cache层来使用。而狭义的文件IO聚焦于Local Disk的访问特性和其与DRAM之间的数据交互。
 
-![存储器的金字塔结构](img/OS/storage-arch.png)
+![存储器的金字塔结构](img/Linux/storage-arch.png)
 <center class="half">
     <center mg src="img/OS/storage-arch.png" title="a" width="300" alt="图片说明1"/> 题注
 </center>
 
 一个简单的用户态的`stdio::printf()`将经过运新模式切换、缓存切换等多个过程才能将更改内容写入存储介质：**用户态的IO函数都有自己在用户态建立的`buffer`**，这主要是出于性能的考虑（系统调用的代价是昂贵的，没必要对每一次IO都使用系统调用，尤其是小的IO，通过用户态缓冲可以**将多次IO请求聚合成一次内核IO**）。同时下图中有意忽略了存储介质自带的缓存（由介质自己管理），图中的`Kernel buffer cache`也被习惯性称之为`Page Cache`；
 
-![缓存与IO](img/OS/io-step.png)
+![缓存与IO](img/Linux/io-step.png)
 
-![网络IO和文件IO](img/OS/file-network-IO.webp)
+![网络IO和文件IO](img/Linux/file-network-IO.webp)
 
 ##  内核IO栈
 
-![Linux内核的IO栈的结构](img/OS/Linux-storage-stack.png)
+![Linux内核的IO栈的结构](img/Linux/Linux-storage-stack.png)
 
-![Linux的三种文件IO模型](img/OS/linux-io-model.png)
+![Linux的三种文件IO模型](img/Linux/linux-io-model.png)
 
 ## [内存中的Buffer与Cache](https://linux.cn/article-7310-1.html)
 
@@ -162,9 +162,9 @@ Linux 内核会在内存将要耗尽的时候，触发内存回收的工作，�
 
 即`Buffer IO`，大多数文件系统的默认IO（如`printf(), puts()`）都采用的是标准IO的方式，需要经历**物理设备<–>设备自带缓存<–>内核缓冲区（Page Cache）<–>（用户缓冲区）<–>用户程序**的过程，其中用户缓冲区即上文提到的`stdio`等程序库提供的自实现缓冲。对于写过程一般函数只实现到由用户缓冲到内核缓冲（`write back`机制），至于**何时写入设备缓冲由OS决定、pdflush (page dirty flush)内核线程执行**（可以调用`sync`等干预），由设备缓存到设备由设备自身控制。
 
-![使用DMA的Buffer IO](img/OS/DMA-Buffer-IO.jpg)
+![使用DMA的Buffer IO](img/Linux/DMA-Buffer-IO.jpg)
 
-![利用标准IO实现网络读发](img/OS/BufferIO-socket.jpg)
+![利用标准IO实现网络读发](img/Linux/BufferIO-socket.jpg)
 
 **优点**：隔离用户和内核地址空间以加强安全；汇聚IO请求以减少硬件请求；
 
@@ -207,7 +207,7 @@ ssize_t tee(int fdin, int fdout, size_t len, unsigned int flags);
 
 不经过内核缓冲区直接访问介质数据（此时由用户程序**自己设计提供缓冲机制**，通常和**异步IO**结合使用来等待硬件响应）。需要经历**物理设备<–>设备自带缓存<–>（用户缓冲区）<–>用户程序**的过程。其主要的实现方式有用户直接访问硬件和内核控制访问硬件两种方式。
 
-![直接IO](img/OS/direct-io.jpg)
+![直接IO](img/Linux/direct-io.jpg)
 
 **优点**：减少了内存拷贝和一些系统调用
 
@@ -241,7 +241,7 @@ int open(const char *pathname, int flags, mode_t mode);//设置flag就可以启�
 
 #### 缓冲区共享 (Buffer Sharing)
 
-![缓冲区共享](img/OS/share-buffers.jpg)
+![缓冲区共享](img/Linux/share-buffers.jpg)
 
 **实现**：内核提供**快速缓冲区fbufs**（fast buffers），使用一个fbuf 缓冲区作为数据传输的最小单位。用户区和内核区、内核区之间的数据都必须严格地在 fbufs 这个体系下进行通信。fbufs 为每一个用户进程分配一个 buffer pool，里面会储存预分配 (也可以使用的时候再分配) 好的 buffers，这些  buffers 会被同时映射到用户内存空间和内核内存空间。fbufs 只需通过一次虚拟内存映射操作即可创建缓冲区，有效地消除那些由存储一致性维护所引发的大多数性能损耗。
 
@@ -263,9 +263,9 @@ Linux将TCP、UDP的收发抽象成了Socket的读写：
 
 `mmap()`将一个文件描述符指向文件逻辑上连续的一段数据直接映射到进程的地址空间，实现了**进程用户空间缓冲区<–>文件所在内核空间缓冲区之间的映射**（用户空间和内核空间的虚拟内存地址同时**映射到同一块物理内存**，用户态进程可以直接操作物理内存），之后进程读写操作这一段用户空间的内存就相当于直接读写文件（匿名文件或命名文件）的缓冲页，而系统会自动回写脏页到对应的硬件上，用户进程不用因为内核空间和用户空间相互隔离而将数据在两个空间的内存之间来回拷贝。
 
-![mmap配合write的IO](img/OS/mmap-model.jpg)
+![mmap配合write的IO](img/Linux/mmap-model.jpg)
 
-![利用mmapIO实现网络读发](img/OS/mmap-socket.jpg)
+![利用mmapIO实现网络读发](img/Linux/mmap-socket.jpg)
 
 #### 函数原型
 
@@ -300,7 +300,7 @@ int munmap(void *addr, size_t length);//释放内存映射区
 
 并不是以返回值开始`len`长的地址都可访问，只有**部分可访问**，`mmap`可访问的地址空间为**即在文件大小以内又在映射区域范围内**的数据。对不同部分的访问将收到不同的结果。文件大小（可能动态变化）、 `mmap`的参数 `len` 都不能决定进程能访问的大小。
 
-![mmap()可访问地址范围](img/OS/accessable.png)
+![mmap()可访问地址范围](img/Linux/accessable.png)
 
 #### [过程分析](https://www.cnblogs.com/huxiao-tee/p/4660352.html)
 
@@ -370,7 +370,7 @@ int munmap(void *addr, size_t length);//释放内存映射区
 
 **CASE 1**：偏移为0、映射大小（5000）等于文件大小（5000）、映射大小超过整数页
 
-![case-1](img/OS/case1.png)
+![case-1](img/Linux/case1.png)
 
 此时：
 
@@ -382,7 +382,7 @@ int munmap(void *addr, size_t length);//释放内存映射区
 
 **CASE 2**：偏移为0、映射大小（15000）大于文件大小（5000）、映射大小超过整数页 
 
-![case-2](img/OS/case2.png)
+![case-2](img/Linux/case2.png)
 
 （1）进程可以正常读/写被映射的前5000字节(0~4999)，写操作的改动会在一定时间后反映在原文件中。
 
@@ -406,9 +406,9 @@ int munmap(void *addr, size_t length);//释放内存映射区
 
 **`sendfile`：**硬盘–> 内核缓冲–>内核socket缓冲–>网络协议栈（两次模态切换、两次DMA拷贝、一次CPU拷贝）
 
-![sendfile](img/OS/sendfile.jpg)
+![sendfile](img/Linux/sendfile.jpg)
 
-![sendfile实现网络读发](img/OS/senfile-socket.jpg)
+![sendfile实现网络读发](img/Linux/senfile-socket.jpg)
 
 #### 函数原型
 
@@ -435,13 +435,13 @@ ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count);
 
 **复制到socket缓冲区中的只有记录数据位置和长度的描述符而没有实际的数据**，DMA模块将数据直接从内核缓冲区传递给协议引擎，从而又消除了一次复制。
 
-![利用DMA聚合拷贝的sendfile](img/OS/DMA-Gather-Copy-Socket.jpg)
+![利用DMA聚合拷贝的sendfile](img/Linux/DMA-Gather-Copy-Socket.jpg)
 
 ### `splice()`
 
 `splice`需要在内核缓冲区和内核的socket缓冲区之间**建立管道连接**避免CPU拷贝。适用于**任意两个文件描述符中移动数据**（两个文件描述符中**至少有一个是管道**设备），并且用户程序对数据**没有修改**的场景；
 
-![splice传输原理](img/OS/splice.jpg)
+![splice传输原理](img/Linux/splice.jpg)
 
 #### 函数原型
 
@@ -552,7 +552,7 @@ void free(void *ptr);
 
 Linux对内存的管理划分成三个层次，分别是Node、Zone、Page。对这三个层次简介如下：
 
-![Linux内存管理的3个层次](img/OS/mem-man.jpg)
+![Linux内存管理的3个层次](img/Linux/mem-man.jpg)
 
 |       层次       |                             说明                             |
 | :--------------: | :----------------------------------------------------------: |
@@ -578,7 +578,7 @@ Linux对内存的管理划分成三个层次，分别是Node、Zone、Page。对
 
 ## 物理地址布局
 
-![4GB下的物理内存布局](img/OS/phisics-memory-layout.jpg)
+![4GB下的物理内存布局](img/Linux/phisics-memory-layout.jpg)
 
 ### ZONE_DMA（0~16M）
 
@@ -596,17 +596,17 @@ Linux对内存的管理划分成三个层次，分别是Node、Zone、Page。对
 
 由于开启了分页机制，**内核需要访问全部物理地址空间**的话，必须先建立映射关系，然后通过虚拟地址来访问。在32bit Linux中内核简化了分段机制（Intel由于历史原因必须支持分段），将最高的1GB虚拟内存空间作为内核空间（内核对应的虚拟地址空间对应的物理内存会**常驻内存**，不会被OS换出到磁盘等设备，**所有的进程共享内核空间地址**），对内核空间的访问将受到硬件保护(0级才可访问)，低3GB虚拟内存空间作为用户空间（包含代码段、全局变量、BSS、函数栈、堆内存、映射区等）供用户进程使用（3级可访问）。
 
-![Linux内核空间布局](./img/OS/memory-layout.png)
+![Linux内核空间布局](./img/Linux/memory-layout.png)
 
-![共享内核空间](img/OS/user-kernal-space.png)
+![共享内核空间](img/Linux/user-kernal-space.png)
 
-![Linux物理地址与虚拟地址的映射](img/OS/PA-VA.jpg)
+![Linux物理地址与虚拟地址的映射](img/Linux/PA-VA.jpg)
 
 ## [内核空间布局](https://blog.csdn.net/qq_38410730/article/details/81105132)
 
 内核为了能够访问所有的物理地址空间，就要**将全部物理地址空间映射到的内核线性空间**中。于是内核将0~896M的物理地址空间**一对一映射**到自己的线性地址空间（对应`ZONE_DMA`和`ZONE_NORMAL`区域）中，这样它便可以随时访问里的物理页面。而由于内核的虚拟地址空间的限制，内核按照常规的映射方式不能访问到896MB之后的全部物理地址空间（即**`ZONE_HIGHMEM`**区域），在32位Linux下，内核采取了**动态映射**的方法，即按需的将`ZONE_HIGHMEM`里的物理页面映射到内核地址空间的最后128M线性地址空间里，使用完之后释放映射关系，循环使用这128M线性地址空间以映射到其他所有物理页面。[来源](https://blog.csdn.net/ibless/article/details/81545359) [来源](https://blog.csdn.net/farmwang/article/details/66976818?utm_source=debugrun&utm_medium=referral)
 
-![内核地址空间分布](img/OS/kernel-space-layout.jpg)
+![内核地址空间分布](img/Linux/kernel-space-layout.jpg)
 
 ### 直接/线性映射区域（`896MB`）
 
@@ -622,13 +622,13 @@ Linux对内存的管理划分成三个层次，分别是Node、Zone、Page。对
 
 ### 动态映射区域（`128MB`）
 
-![Linux高端内存分布](img/OS/high-memory.jpg)
+![Linux高端内存分布](img/Linux/high-memory.jpg)
 
 此段内也叫**高端内存**（若**机器安装的物理内存超过内核虚拟地址空间范围**，就会存在高端内存，高端内存只和逻辑地址有关系）。在高端内存最前面留有用来和`normal memory`做间隔的8MB区域，这部分间隔不作任何地址映射，相当于一个做**安全保护的内存空洞**（防止不正确的越界内存访问，因为此处没有进行任何形式的映射，如果进入到空洞地带，将会触发处理器产生一个异常），**事实上所有的这样的内存空洞都是用来作安全防护的**。
 
 通过借助128MB的逻辑地址空间和**动态映射**的方法可以使Linux内核**使用到超出内核虚拟地址空间（1GB）的物理内存**，内核对这一块的地址进行访问时必须**借助页表**才能得到真正的物理地址。具体的动态映射方式有三种，这三种动态映射的方式分别使用三段不同的虚拟地址空间。
 
-![高端内存的动态映射](img/OS/high-mem-map.webp)
+![高端内存的动态映射](img/Linux/high-mem-map.webp)
 
 #### `vmalloc`区（**`120MB`**）：
 
@@ -655,7 +655,7 @@ Linux对内存的管理划分成三个层次，分别是Node、Zone、Page。对
 |    栈    | 局部变量、函数参数与返回值、函数返回地址、调用者环境信息（如寄存器值） |   静态   | 和堆共享上限、**可设置** |  用户  |
 | 内核空间 |      储操作系统、驱动程序、**命令行参数和环境变量**等……      |  动+静   |           定长           |  内核  |
 
-![程序段分布](img/OS/segments-layout.jpg)
+![程序段分布](img/Linux/segments-layout.jpg)
 
 Linux通过将每个段的起始地址赋予一个随机偏移量**`random offset`**来打乱内存布局（否则进程内存布局缺乏变化，容易被试探出内存布局）以加强安全性。
 
@@ -694,4 +694,4 @@ Linux通过将每个段的起始地址赋予一个随机偏移量**`random offse
 
 进程的多个段的连续地址空间构成多个独立的内存区域。Linux内核使用**`vm_area_struct`结构**（包含区域起始和终止地址、指向该区域支持的系统调用函数集合的**`vm_ops`指针**）来表示一个独立的虚拟内存区域，一个进程拥有的多个`vm_area_struct`将被链接接起来方便进程访问。
 
-![Linux进程内存管理](img/OS/vm_area_struct.png)
+![Linux进程内存管理](img/Linux/vm_area_struct.png)
