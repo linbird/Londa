@@ -1,4 +1,4 @@
-​	
+q	
 
 # 设计哲学
 
@@ -106,7 +106,7 @@ Linux将所有的执行实体都称之为任务Task（Task是进程概念在Linu
 
 
 
-# [IO](https://zhuanlan.zhihu.com/p/308054212)
+# [I](https://zhuanlan.zhihu.com/p/308054212) [O](https://zhuanlan.zhihu.com/p/83398714)
 
 为了满足速度与容量的需求，现代计算机系统都采用了多级金字塔的存储结构。在该结构中上层一般作为下层的Cache层来使用。而狭义的文件IO聚焦于Local Disk的访问特性和其与DRAM之间的数据交互。
 
@@ -247,11 +247,52 @@ int open(const char *pathname, int flags, mode_t mode);//设置flag就可以启�
 
 **缺点**：实现需要依赖于用户进程、操作系统内核、以及 I/O 子系统 (设备驱动程序，文件系统等)之间协同工作。需要使用新的系统API。
 
-## 网络IO
+## [网络IO](https://mp.weixin.qq.com/s?src=11&timestamp=1621430712&ver=3078&signature=-RLNKlzq-y1BC0uMX2YJtIvcDFoGjI*ghFHOl8ks9SUfGtGjiZE4ThKBbd2c6t4SwA21TY4v6fQ7eEWI9jE-3-c6cOOkRbhd1kw5Rl-c1*zQxjQhwESxDstPOd8FVxpA&new=1)
 
 ### socket收发
 
-Linux将TCP、UDP的收发抽象成了Socket的读写：
+Linux将TCP、UDP的收发抽象成了Socket的读写。网路适配器驱动会在内核中申请一块内存用来存放实际的收发数据，而Ring Buffer主要被用来存储一些描述信息用以在内存中索引到真正的数据，DMA负责完成物理内存与网络适配器中的缓存的数据拷贝工作。
+
+#### 数据结构
+
+##### `sk_buff`链
+
+![内核Socket缓冲链](img/Linux/sk_buff-list.webp)
+
+![内核Socket缓冲链](img/Linux/sk_buff.webp)
+
+每个socket被创建后，内核会为其分配一个初始时为空的**`sk_buff`链表（`skb`）**，网络收发（socket读写）的过程就是对`sk_buff`链表进行追加删除的过程。内核将TCP数据包抽象表示为一个`sk_buff`，其长度是固定的（与 MTU 有关）。
+
+```c
+skb = alloc_skb(len, GFP_KERNEL);//申请创建skb链
+skb_reserve(skb, header_len);//释放skb
+```
+
+**`sk_buff`创建时机**：应用写Socket；数据包到达NIC；
+
+**`sk_buff`拷贝时机**：用户空间与内核空间的拷贝；sk_buff与NIC之间的拷贝；
+
+##### QDisc 排队规则
+
+位于 IP 层和网卡的 Ring Buffer 之间的由**内核定义**的数据排队规则，该机制是IP层流量控制的基础。
+
+##### Ring Buffer
+
+固定大小的环形队列，队列中存放的元素是指向`sk_buff`的描述符和被指向的`sk_buff`的使用状态（`ready、used`），数据会存放在描述符指向的`sk_buff`中。通过这样一个缓冲结构可以平衡生产者、消费者的速度，因为一旦Ring Buffer满后就丢弃数据包。
+
+#### TCP Socket发送
+
+![TCP数据组装](img/Linux/socket-send.png)
+
+![TCP Socket发送详细过程](img/Linux/socket-send-dtail.png)
+
+内核根据用户发送来的数据会创建`sk_buff`链表，每个`sk_buff`的最大大小为`MSS`，从而将经由TCP传输的原始数据进行了**分割**。链表上的所有空间构成了**内核的Socket缓冲区**。之后网络协议栈会负责在每层加上适当的包头。NIC在将数据发送之后会产生一个中断信号通知CPU。
+
+#### TCP Socket接收
+
+![TCP数据拆装](img/Linux/tcp-receive.webp)
+
+![TCP数据拆装](img/Linux/tcp-receive-detail.webp)
 
 # 系统调用
 
@@ -473,6 +514,12 @@ ssize_t splice(int fd_in, loff_t *off_in, int fd_out, loff_t *off_out, size_t le
 
 **失败**：返回-1，并设置error
 
+### [`tee()`](# 减少拷贝：`Linux::tee()`)
+
+### `vmsplice()`
+
+
+
 ## 内存分配 
 
  从操作系统角度来看，进程分配内存主要由**`brk()`和`mmap()`**两个系统调用完成，这两种内存分配调用分配的都是**以页为基本单位的虚拟内存**，其物理内存的分配发生在第一次访问已分配的虚拟地址空间产生缺页中断时，OS会负责分配物理内存，然后建立虚拟内存和物理内存之间的映射关系。
@@ -524,31 +571,380 @@ void *malloc(size_t size);//底层依赖mmap、munmap、brk、sbrk
 void free(void *ptr);
 ```
 
+## 实体克隆
+
+`fork、vfork、clone`都是linux的系统调用，这三个函数分别调用了`sys_fork、sys_vfork、sys_clone`，最终都调用了`do_fork`函数，差别在于参数的传递和一些基本的准备工作不同，主要用来创建新的子进程或线程。
+
+### `fork()`
+
+```c
+pid_t fork(void);
+//@Return value
+//	失败返回-1；成功在子进程返回0，在父进程返回子进程的pid
+```
+
+子进程复制了父进程包括`task_struct`（`PID`不同）在内所有的资源（**此时两个进程共享物理内存空间，可以节省内存、加快速度**），之后利用**写时复制**为子进程分配和初始化资源：内核以**写保护**的方式在父子进程间共享页并监控页的状态。当任何一个进程试图写保护页时将产生异常，内核为尝试写的进程复制该页到新的物理页并标记新页为可写。原页仍然为写保护状态，当其他进程试图写入原页时，如果写进程是页帧的唯一属主就把这个页帧标记为对这个进程可写，否则执行复制的过程。
+
+### `vfork()`（过时）
+
+```c
+pid_t vfork(void); // 已不实用的系统调用
+```
+
+如果**没有写时复制**机制时`fork`后调用`execve()`用新的内存镜像取代原来的内存镜像将使`fork`的复制毫无意义（尤其是原进程的地址空间比较大时）。在此情况下增加了`vfork()`，它产生的**子进程与父进程共享所有资源**（修改相互影响）并**阻塞父进程**直到在子进程调用`execve()`或`exit()`之前不会执行,（**子进程不能使用return**）。
+
+### `clone()`
+
+```c
+int clone(int (*fn)(void *), void *child_stack, int flags, void *arg);
+//@parameters
+//	fn: 指向要新运行的函数的指针
+//	child_stack: 位子进程分配的系统栈空间
+//	flags: 描述从父进程获取哪些资源
+//	arg: 传递给子进程的参数
+//@Return value
+
+```
+
+|      标志       |                             含义                             |
+| :-------------: | :----------------------------------------------------------: |
+| `CLONE_PARENT`  | 创建的子进程的父进程是调用者的父进程，新进程与创建它的进程成了“兄弟”而不是“父子” |
+|   `CLONE_FS`    | 子进程与父进程共享相同的文件系统，包括root、当前目录、umask  |
+| `CLONE_THREAD`  | Linux 2.4中增加以支持POSIX线程标准，子进程与父进程共享相同的线程群 |
+|  `CLONE_FILES`  |   子进程与父进程共享相同的文件描述符（file descriptor）表    |
+|  `CLONE_NEWNS`  | 在新的namespace启动子进程，namespace描述了进程的文件hierarchy |
+| `CLONE_SIGHAND` |     子进程与父进程共享相同的信号处理（signal handler）表     |
+| `CLONE_PTRACE`  |               若父进程被trace，子进程也被trace               |
+|  `CLONE_VFORK`  |           父进程被挂起，直至子进程释放虚拟内存资源           |
+|   `CLONE_VM`    |              子进程与父进程运行于相同的内存空间              |
+|   `CLONE_PID`   |                子进程在创建时PID与父进程一致                 |
+
+可以更细粒度地控制与子进程共享的资源，利用它可以创建线程、父子进程、兄弟进程。利用`clone`创建出的新运行实体和**不再复制原运行实体的栈空间**，而是借助`child_stack`创建一个新的空间。
+
 # 进程通信
 
-| 通信方式 |                用于空间与内核的局限                |
-| :------: | :------------------------------------------------: |
-|   管道   |       管道通信局限于父进程和子进程间的通信。       |
-| 消息队列 | 消息队列在硬中断和软中断中不可以无阻塞地接收数据。 |
-|  信号量  |      信号量无法在内核空间和用户空间之间使用。      |
-| 内存共享 |            内存共享依赖信号量通信机制。            |
-|  套接字  |    套接字在硬、软中断中不可以无阻塞地接收数据。    |
+
+## 信号 signal
+
+Linux事先定义了一系列称为信号的变量用来指代某些事件。信号是一种**更高层的**软件形式的异常，不同于陷阱、中断和异常等**由内核透明处理的低层异常**的机制，信号的处理可以由用户完成。当发生某一事件时，内核会向进程通告该事件对应的信号，用户程序决定如何处理信号，如果不处理就会执行OS默认的处理方式。
+
+![Linux预定义的部分信号](img/Linux/Linux-signals.jpg)
+
+### 相关API
+
+```c
+void (*signal(int signum, void (*handler))(int)))(int);
+```
+
+### 信号的收发
+
+**产生**：OS可以**将硬件异常包装成信号**交给进程、也可以由进程调用函数产生信号。
+
+**接收**：每个进程有一个待处理信号的集合（**隐式阻塞**：同类待处理信号个数≤1），进程也可以显式阻塞某些信号。
+
+### 信号处理
+
+信号会改变进程的原有控制顺序，对于接收到的信号进程可以采取执行默认操作、忽略和处理三种方式中的一种，要想处理信号必须提供一个**用户态信号处理函数**（ **`SIGSTOP` 和 `SIGKILL`**不能被阻塞和处理）。
 
 ## 管道
 
+由于管道是**基于字节流的通信**（无消息边界），无法对来自不同的进程的信息区分，所以一般只用在两个进程间**半双工**通信。
+
+
+### 实现原理
+
+管道是内核借助[`pipefs`](https://blog.csdn.net/Morphad/article/details/9219843)创建的一个**内核缓冲区**（大小一般为一页），并没有专门的数据结构用来描述管道，对该文件的操作由`pipefs`提供[具体的实现支持](https://www.cnblogs.com/zengyiwen/p/5755170.html)（对读写端错误调用写读都会引发错误、收到`-EBADF`的返回值）。
+
+![进程使用管道实现通信](img/Linux/pipe-communication.png)
+
+父进程创建的管道描述符会被`fork`后的子进程复制，此时两个进程各自持有的`file`结构的`inode`指向同一个VFS的`inode`节点，该`inode`节点指向同一个物理页。父子进程访问管道文件最终读写的是同一个内存页。
+
+![VFS为Pipefs提供的抽象](img/Linux/VFS-PipeFS.png)
+
+![pipefs:管道文件](img/Linux/pipefs.jpg)
+
+### 匿名管道
+
+内核中的**缓冲区没有明确的标识符**，其他进程无法直接访问管道。用于实现有**亲缘关系**（**多个进程只要能够拿到同一个管道（缓冲区）的操作句柄就可以**）的进程间的通信。
+
+#### API
+
+```c
+#include <unistd.h>
+
+int pipe(int fd[2]);//创建管道
+//@parameters
+//	fd[2]：传递给内核用来保存内核创建的管道描述符，两个元素分别是读端和写端
+//@Return value
+//	成功返回0；失败返回-1；
+
+int dup(int oldfd);
+int dup2(int oldfd, int newfd);
+int dup3(int oldfd, int newfd, int flags);
+
+#include <stdio.h>
+FILE *popen(const char *command, const char *type);//创建管道和shell进程（用于创建执行command的孙子进程）
+//@parameters
+//	command: 将要执行段的孙子进程
+//	type: 'r','w'
+//		'r': command执行的标准输出写入创建的管道，返回相当于管道读端
+//		'w': 返回相当于管道写端，对管道的写将作为command执行的标准准输入端
+//@Return value
+//	成功返回管道读端或者写端描述符；失败返回NULL并设置error
+int pclose(FILE *stream); //等待子进程退出并关闭管道
+//@parameters
+//	stream: popen返回的管道文件描述符
+//@Return value
+//	成功返回shell的终止状态；失败返回-1并设置error
+```
+
+### [命名管道](https://www.codenong.com/cs106798137/)
+
+此时内核中的**缓冲区具有标识符**，其他的进程可以通过这个标识符访问同一个文件实现**同一主机上任意进程间的通信**。**标识符为一个可见于文件系统的文件名**，所以需要依靠一个具体的文件名，此时的命名文件仅仅起到提供inode供其他进程索引而已，**数据依然存在于内存缓冲页**面中。命名管道一旦建立，之后它的读、写以及关闭操作都与普通管道完全相同。
+
+#### API
+
+```c
+#include <sys/types.h>
+#include <sys/stat.h>
+
+int mknod(const char *filename, mode_t mod, dev_t dev);//创建普通或特殊文件(命名管道)
+//@parameters
+//	filename: 待创建的文件名
+//	mod: 文件权限，只读只写会阻塞
+//	dev: 设备值，只在创建设备文件时才会用到，其值取决于文件创建的种类
+//@Return value
+//	成功返回0；失败返回-1；
+
+int mkfifo(const char *filename, mode_t mode); //创建命名管道文件
+//@parameters
+//	filename: 创建的命名管道的文件名
+//	mode: 文件权限，只读只写会阻塞
+//@Return value
+//	成功返回0；失败返回-1；
+```
+
+### shell与管道
+
+将进程的标准输入\标准输出描述符分别复制到管道的读写端，实现两个进程的输入输出通过管道连接，由**于内核给管道总是分配最小的可用描述符**，所以需要格外注意。
+
+```c
+// 进程1：校验管道写入端，复制标准输出描述符到管道写入端，关闭管道原写入端
+if(pipefd[1] != STDOUT_FILENO){
+	dup2(pipefd[1],STDOUT_FILENO);
+	close(pipefd[1]);
+}
+// 进程2：校验管道读出端，复制标准输入描述符到管道读出端，关闭管道原读出端
+if(pipefd[0] != STDIN_FILENO){
+	dup2(pipefd[0],STDIN_FILENO);
+	close(pipefd[0]);
+}
+```
+
+### 同步与互斥
+
+当要写入的数据量**不大于`PIPE_BUF`时，内核将保证写入的原子性**。
+
+### 注意事项（阻塞……）
+
+1. 当管道文件的**所有读写端都关闭时，管道文件才会被释放**（丢弃`inode`，释放`page`）。所以需要**主动及时关闭无用的管道描述符**。
+2. 所有读端都关闭后再次从写端**`write`会失败**并收到`SIGPIPE`信号(默认杀死进程)。
+3. 所有写端关闭且管道已空时从读端`read`才会才**返回0且收到`EOF`标志**。
+4. **管道无数据阻塞读，满数据阻塞写**，
+
 ## 共享内存
 
-实际上，进程之间在共享内存时，并不总是读写少量数据后就解除映射，有新的通信时，再重新建立共享内存区域。而是保持共享区域，直到通信完毕为止，这样，数据内容一直保存在共享内存中，并没有写回文件。共享内存中的内容往往是在解除映射时才写回文件的。因此，采用共享内存的通信方式效率是非常高的。
+将**多个进程的虚拟地址映射到同一块物理地址**上，这样进程对自己空间中作为共享内存的一段空间的操作将对其他进程可见，从而实现进程间的通信。共享内存**有两种实现方案**，一种`system V`基于`shm`文件系统（`tmpfs`），一种基于`mmap`系统调用创建共享内存映射。
+
+### 基于`shm`
+
+#### API
+
+```c
+#include < sys/shm.h>
+
+int shmget(key_t key, size_t size, int shmflag);//创建共享内存
+//@Parameters
+//	key: 非0，
+//	size: 共享内存的长度，范围在[SHMMIN, SHMMAX]，如果key之前以存在则size要不大于key的原size值
+//	shmflag: 权限标志，支持mode_t和0644之类的权限控制做或操作
+//@Return value
+//	成功则返回一个共享内存描述符；失败返回-1
+
+void *shmat(int shm_id, const void *shm_addr, int shmflg);//把共享内存连接到当前进程的地址空间,启动对该共享内存的访问。
+//@Parameters
+//	shm_id: shmget函数返回的共享内存标识
+//	shm_addr: 指定共享内存连接到当前进程中的地址位置，通常为null（OS自己选择）。
+//	shmflag: 组标志位，通常为0。
+//@Return value
+//	成功时返回一个指向共享内存第一个字节的指针；失败返回-1
+
+int shmdt(const void *shmaddr);//将共享内存从当前进程中分离,当前进程不能够在使用共享内存，但内存仍属于进程
+//@Parameters
+//	shm_addr: shmat返回的指向共享内存的指针
+//@Return value
+//	成功返回0；失败返回-1；
+
+int shmctl(int shm_id, int command, struct shmid_ds *buf);//控制共享内存
+//@Parameters
+//	shm_id: shmget函数返回的共享内存标识符
+//	command: 采取的动作，取IPC_STAT、IPC_SET、IPC_RMID（删除）之一
+//	buf: 指向共享内存模式和访问权限的结构shmid_ds的指针
+//@Return value
+//	
+```
+
+#### 内部实现
+
+每一个新创建的**共享内存对象都用一个`shmid_kernel`数据结构来表达**。系统中所有的`shmid_kernel`数据结构都保存在`shm_segs`向量表（长度为`SHMMNI:128`，所以**系统支持的基于`shm`的共享内存个数有限**）中，该向量表的每一个元素都是一个指向`shmid_kernel`数据结构的指针。`shmid_kernel`结构中的`shmid_ds`域记录该共享内存区的认证信息。`shmid_kernel`的`attaches`链表记录了使用该物理内存的各进程的虚拟内存区域的信息。
+
+内核会为每个申请使用该共享内存的进程**创建一个新的`vm_area_stuct`结构**用来描述该共享内存，用户可以干预该共享内存在进程的虚拟地址空间的位置，进程将内核创建的描述共享内存的`vm_area_struct`**连接到自己的`mm_struct`结构**中供进程寻址使用，同时也要**连接到`attaches`链表的末端**。
+
+![shm_segs向量表](img/Linux/shm_segs-vector.jpg)
+
+![进程如何获取使用shm](img/Linux/shm-attach.gif)
+
+##### 管理源码
+
+```c
+#include <linux/shm.h>
+
+struct shmid_kernel{
+    struct shmid_ds u;
+    unsigned long shm_npages;	//该共享内存区域的大小，以页为单位。
+    unsigned long *shm_pages;	//指向共享内存对象的每个页面的指针构成的数组
+    struct vm_area_struct *attaches;	//使用该共享内存的各进程的虚拟内存区域指针构成的链表
+};
+
+ struct shmid_ds {
+    struct ipc_perm shm_perm;	//操作权限
+    int shm_segsz;				//段的大小（以字节为单位
+    __kernel_time_t shm_atime;  /* last attach time */
+    __kernel_time_t shm_dtime;  /* last detach time */
+    __kernel_time_t shm_ctime;  /* last change time */
+    __kernel_ipc_pid_t shm_cpid; /* pid of creator */
+    __kernel_ipc_pid_t shm_lpid; /* pid of last operator */
+    unsigned short shm_nattch;	//当前附加到该段的进程的个数(即使用该共享内存的进程个数)
+    unsigned short shm_unused;   /* compatibility */
+    void *shm_unused2;           /* ditto - used by DIPC */
+    void *shm_unused3;           /* unused */
+};
+```
+
+### [基于`mmap`](# 内存映射：`mmap()`)
+
+### 方案总结
+
+|        |               数据写回                |    数据持久性    | 进程中止的影响 |
+| ------ | :-----------------------------------: | :--------------: | :------------: |
+| `shm`  | 基于`shm`文件系统中的文件，不写回磁盘 | 不删则随内核存在 |     需考虑     |
+| `mmap` |      映射普通文件，可以写回磁盘       |    随文件存在    |    不用考虑    |
 
 ## Socket
 
+### Unix流式Socket
+
+### Unix数据包式Socket
+
+### BSD式Socket
+
 ## 消息队列
 
-## 信号量
+### 相关API
+
+Linux提供的ipcs系列命令可以查看系统的消息队列。
+
+```c
+int msgget(key_t key, int msgflg);//创建消息队列
+//@parameters
+//	key: 键名--用来为消息队列命名
+//	msgflg: 消息队列的访问权限
+//@Return value
+//	成功则返回一个以key命名的消息队列描述符；失败返回-1
+
+int msgsend(int msgid, const void *msg_ptr, size_t msg_sz, int msgflg);//将消息注入消息队列
+//@parameters
+//	msgid: msgget函数返回的消息队列标识符
+//	msg_ptr: 指向待发送消息的指针，要求该消息结构是以一个长整型成员变量开始的结构体
+//	msg_sz: msg_ptr指向的消息的长度（而非结构体的长度）
+//	msgflg: 控制当前消息队列满或队列消息到达系统范围的限制时将要发生的事情
+//@Return value
+//	失败返回-1；成功返回0并将消息副本写入消息队列
+
+int msgrcv(int msgid, void *msg_ptr, size_t msg_sz, long int msgtype, int msgflg);//从消息队列获取消息
+//@parameters
+//	msgtype: 
+//		0: 获取消息队列中的第一个消息
+//		>0: 获取匹配消息类型的第一个消息
+//		<0: 获取类型等于或小于msgtype的绝对值的第一个消息
+//	msgflg: 控制当队列中没有相应类型的消息可以接收时将发生的事情
+//@Return value
+//	失败时返回-1；成功返回被复制到msg_ptr中的字节数并消除消息队列中的相应消息
+
+int msgctl(int msgid, int command, struct msgid_ds *buf);//控制消息队列
+//@parameters
+//	command: 将要采取的动作，可以取3个值
+//		IPC_STAT: 用消息队列的当前关联值覆盖msgid_ds的值
+//		IPC_SET: 把消息列队的当前关联值设置为msgid_ds结构中给出的值（需要进程有足够权限）
+//		IPC_RMID: 删除消息队列
+//	buf: 指向msgid_ds结构的指针
+//@Return value
+//	 成功时返回0；失败时返回-1
+
+struct msgid_ds{
+    uid_t shm_perm.uid;
+    uid_t shm_perm.gid;
+    mode_t shm_perm.mode;
+};
+
+struct my_message{//自定义的消息
+    long int message_type; // 必须含有此域，用来标识不同的消息类型
+    /* The data you wish to transfer*/
+};
+```
+
+### 实现
+
+### 小结
+
+```text
+1，消息队列是面向记录，其中的消息具有特定的格式以及特定的优先级
+2，消息队列独立于发送和接收进程，进程终止时，消息队列机器内容并不会被删除
+3，消息队列可以实现消息的随机查询，消息不一定要以先进先出的次序读取，也可以按消息的类型读取
+4，有足够权限的进程可以向队列中添加消息，被赋予读权限的进程则可以读走队列中的消息
+5，消息队列克服了信号承载信息量少，管道只能承载无格式字节流以及缓冲区大小受限等缺点
+```
+
+ 与命名管道相比，消息队列的优势在于，1、消息队列也可以独立于发送和接收进程而存在，从而消除了在同步命名管道的打开和关闭时可能产生的困难。2、同时通过发送消息还可以避免命名管道的同步和阻塞问题，不需要由进程自己来提供同步方法。3、接收程序可以通过消息类型有选择地接收数据，而不是像命名管道中那样，只能默认地接收。 
+## 总结
+
+![Linux进程通信机制](img/Linux/process-communication.png)
+
+![Linux进程同步机制](img/Linux/process-sync.png)
+
+| 通信方式 |                用于空间与内核的局限                |
+| :------: | :------------------------------------------------: |
+| 消息队列 | 消息队列在硬中断和软中断中不可以无阻塞地接收数据。 |
+|  信号量  |      信号量无法在内核空间和用户空间之间使用。      |
+|  套接字  |    套接字在硬、软中断中不可以无阻塞地接收数据。    |
+
+|   方式   |    数据量    | 进程关系 |    模式    | 同步 |
+| :------: | :----------: | :------: | :--------: | :--: |
+|   信号   |  预定义事件  | 任何进程 |   半双工   |      |
+|  信号量  |              |          |            |      |
+| 匿名管道 | 循环使用一页 | 亲缘进程 |   半双工   |  Y   |
+| 命名管道 | 循环使用一页 | 任何进程 |   半双工   |  Y   |
+|  信号量  |              |          |            |      |
+| 共享内存 |    自定义    | 任何进程 | 无同步支持 |  N   |
+| 消息队列 |              | 任何进程 |            |      |
+|  套结字  |              |          |            |      |
+
 
 # 内存布局
 
-## 内存管理层次
+## [内存管理](https://blog.csdn.net/gatieme/category_6393814.html)
+
+### 3层管理架构
 
 Linux对内存的管理划分成三个层次，分别是Node、Zone、Page。对这三个层次简介如下：
 
@@ -560,21 +956,95 @@ Linux对内存的管理划分成三个层次，分别是Node、Zone、Page。对
 |  Zone（管理区）  | 每一个Node（节点）中的内存被划分成多个管理区域（Zone），用于表示不同范围的内存 |
 |   Page（页面）   | 每一个管理区又进一步被划分为多个页面，页面是内存管理中最基础的分配单位 |
 
-下面以扩展用户堆栈为例，解释3个层次的关系。
+### [Buddy伙伴系统（解决外碎片）](https://blog.csdn.net/gatieme/article/details/52420444)
 
-调用函数时，会涉及堆栈的操作，当访问地址超过堆栈的边界时，便引起page fault，内核处理页面失效的过程中，涉及到内存管理的3个层次。
+把所有的空闲页面分为11 个块组，每组由若干个大小相同的块（每块有$2^x, x=[0,10]$个**页**）构成链，每个不同大小的块组又用链表组织起来。以页为单位管理和分配内存，通过监视内存的分配情况，解决外碎片的问题。
 
-Ø 调用expand_stack()修改vm_area_struct结构，即扩展堆栈区的虚拟地址空间；
+![伙伴系统对内存的组织](img/Linux/buddy.png)
 
-Ø 创建空白页表项，这一过程会利用mm_struct中的pgd(页全局目录表基址)得到页目录表项(pgd_offset())，然后计算得到相应的页表项(pte_alloc())地址；
+#### 分配
 
-Ø 调用alloc_page()分配物理页面，它会从指定内存管理区的buddy system中查找一块合适的free_area，进而得到一个物理页面；
+**原则：**保证在内核只要申请一小块内存的情况下，不会从大块的连续空闲内存中截取一段过来，从而保证了大块内存的连续性和完整性。
 
-Ø 创建映射关系，先调用mk_pte()产生页表项内容，然后调用set_pte()写入页表项。
+分配的机制和STL中的分配器机制相同，在所有块组中找到大于等于需分配大小（会自动调整为 不小于要求的幂次个页面）的最小内存块。将该内存块分配出去，块中剩余的的页面插入到适当的空闲块组中。无法完成分配就产生错误信号。
 
-Ø 至此，扩展堆栈基本完成，用户进程重新访问堆栈便可以成功。
+![伙伴算法下的分配](img/Linux/buddy-alloc.png)
 
-可以认为，结构体pgd和vm_area_struct，函数alloc_page()和mk_pte()是连接三者的桥梁。
+#### 释放
+
+将释放的空闲块中的**伙伴块（大小相同且物理地址连续的两个块）合并**成一个更大的快，迭代重复这一过程知道无法合并。
+
+### [Slab分配机制（解决内碎片）](https://kernel.blog.csdn.net/article/details/52705552)
+
+==此部分主要是思想的描述，由于slab有多种实现方法，故下文中的数据结构描述只是抽象的描述==
+
+Slab分配器向外部提供的接口为**`kmalloc()、kfree()`**，它**以伙伴系统为基础、以字节为分配单位、基于对象的**为**经常分配并释放的小对象**提供内存管理和**缓存**机制。Slab分配器提供了**专用slab**（负责为`m_area_struct、mm_struct`等特定结构体分配内存）和**通用slab**两种（`sudo cat /proc/slabinfo`中名为`kmalloc-xxx`的为通用型slab）分配，其分配和管理机制完全相同。
+
+#### 数据结构
+
+##### `struct slab/page`
+
+slab指**一个或多个连续的物理页构成的内存空间**（每个slab的页数目为$2^{kmem\_cache::gfporder}$），它存储了实际的有效对象（个数为`kmem_cache::num`），内核对每个slab结构的描述借助**`struct page`实现**（`page`结构体包含了大量的`union`，既可以描述页又可以描述`slab`）。不同分配状态的单个slab被组织成一个链表，当一个slab的分配状态出现变化时，这个slab将会进入到别的链表中。
+
+|  slab分配状态   |                意义                |
+| :-------------: | :--------------------------------: |
+|  `slabs_full`   |        所有对象被标记为使用        |
+|  `slabs_free`   |        所有对象被标记为空闲        |
+| `slabs_partial` | 有的被标记为使用，有的被标记为空闲 |
+
+每个slab内部空间可以大致分为管理区和数据区（存放有效数据）。灰色部分是着色区，绿色部分是slab管理结构，黄色部分是空闲对象链表的索引，红色部分是对象的实体。
+
+![slab的结构](img/Linux/slab.jpeg)
+
+管理性数据中比较重要的时`s_mem`和`kmem_bufctl_t＼freelist`指针。`s_mem`指向这段连续页框中第一个对象；后者本质上是一个空闲对象链表，用于描述下一个可用对象序号。
+
+![kmem_bufctl_t](img/Linux/kmem_bufctl_t.png)
+
+##### `struct kmem_cache`
+
+```c
+struct kmem_cache {//每类对象一个实例
+    unsigned int num;			//每个slab中的对象数量
+    unsigned int gfporder;		//每个slab中包含的页框的数量的幂次，即每个slab有2^gfporder个页
+    const char *name;			//该kmem_cache对应的类的名称，如task_struct
+    struct kmem_cache_node *node[MAX_NUMNODES];//元素指向不同分配状态的slab
+	void (*ctor)(void *obj);	//该kmem_cache对应的类的对象的初始化函数
+	struct array_cache *cpu_cache;//array_cache数组，每个CPU核心对应一个数组元素
+	……
+};
+```
+
+Slab分配器的主要管理结构，每个`kmem_cache`管理不同大小的基本对象，其中包含了专用slab和通用slab（其空间中的基本分配大小为｛$2^x,x=[5,12]$｝字节）。
+
+![kmem_cache](img/Linux/kmem_cache.png)
+
+`kmem_cache`内部的**`kmem_cache_node[MAX_NUMNODES]/(kmem_list3)`**数组记录了该类几种不同分配状态的slab构成的链表，开始时这三个链表都为空，只有在申请对象时发现没有可用的slab时才会创建一个新的slab加入到链表中。
+
+##### `struct kmem_cache::array_cache`
+
+```c
+struct array_cache {	//每个CPU核心一个实例
+    unsigned int avail; //当前可用对象的数目.
+    unsigned int limit; //entry中保存的最大的对象的数目
+    unsigned int batchcount; //可用entry为空时从slab中调入或entry满时调入slab时的操作的对象的个数
+    unsigned int touched;	 //是否在收缩后被访问过
+    void *entry[];		//伪数组，初始没有任何数据项，之后会增加并保存释放的对象指针
+}
+```
+
+对应于**每个CPU核心存在一个实例**，该实例保存了对应CPU核心上最后释放的对象。
+
+##### 整体组织
+
+![太难李](img/Linux/slablayer.png)
+
+#### 管理
+
+![分配流程](img/Linux/slab-alloc-step.png)
+
+ **分配**：**优先从array_cache的entry中按LIFO原则**（最后的对象很可能还在硬件cache）。如果`entry`为空，则说明是第一次从`array_cache`中分配obj或者是`array_cache`中的所有对象都已分配，所以需要先从`kmem_cache`的`kmem_list3`中取出`batchcount`个对象，把这些对象全部填充到entry中，然后再分配。
+
+**释放**：**优先释放到`kmem_cache::array_cache`中**。只有`kmem_cache::array_cache`中的对象数量超过了上限`kmem_cache::limit`，系统才会将`kmem_cache::array_cache::entry`中的前`kmem_cache::batchcount`个对象搬到`kmem_cach::kmem_list3`中。当slab数量太多时，`kmem_cache`会将一些slab释放回伙伴系统中。
 
 ## 物理地址布局
 
@@ -692,6 +1162,6 @@ Linux通过将每个段的起始地址赋予一个随机偏移量**`random offse
 
 ## 段的管理
 
-进程的多个段的连续地址空间构成多个独立的内存区域。Linux内核使用**`vm_area_struct`结构**（包含区域起始和终止地址、指向该区域支持的系统调用函数集合的**`vm_ops`指针**）来表示一个独立的虚拟内存区域，一个进程拥有的多个`vm_area_struct`将被链接接起来方便进程访问。
+进程的多个段的连续地址空间构成多个独立的内存区域。Linux内核使用**`vm_area_struct`结构**（包含区域起始和终止地址、指向该区域支持的系统调用函数集合的**`vm_ops`指针**）来表示一个独立的虚拟内存区域，一个进程拥有的多个`vm_area_struct`将被链接接起来方便进程访问（少时用链表、多时用红黑树）。
 
 ![Linux进程内存管理](img/Linux/vm_area_struct.png)
