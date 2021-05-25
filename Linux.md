@@ -585,6 +585,8 @@ pid_t fork(void);
 
 子进程复制了父进程包括`task_struct`（`PID`不同）在内所有的资源（**此时两个进程共享物理内存空间，可以节省内存、加快速度**），之后利用**写时复制**为子进程分配和初始化资源：内核以**写保护**的方式在父子进程间共享页并监控页的状态。当任何一个进程试图写保护页时将产生异常，内核为尝试写的进程复制该页到新的物理页并标记新页为可写。原页仍然为写保护状态，当其他进程试图写入原页时，如果写进程是页帧的唯一属主就把这个页帧标记为对这个进程可写，否则执行复制的过程。
 
+![fork流程](img/Linux/fork-step.png)
+
 ### `vfork()`（过时）
 
 ```c
@@ -623,6 +625,64 @@ int clone(int (*fn)(void *), void *child_stack, int flags, void *arg);
 
 # 进程通信
 
+Linux提供的ipcs系列命令可以查看系统内的IPC通信状态，Linux内核为系统IPC提供了一个统一的系统调用ipc()
+
+```shell
+ipcs -m -q -s -all
+```
+
+```c
+int ipc(unsigned int call,int firtst,int second,int third,void*ptr,int firth);
+//@parameters
+//	call: 具体的操作码，可以区以下宏
+//		信号量：SEMOP、SEMGET、SEMCTL
+//		消息队列：MSGSND、MSGRCV、MSGGET、MSGCTL
+//		共享内存：SHMAT、SHMDT、SHMGET、SHMCTL
+```
+
+## [Namespace](https://blog.csdn.net/energysober/article/details/89303542)
+
+Linux Namespaces机制提供一种资源隔离方案。PID、IPC、Network等系统资源不再是全局性的，而是属于某个特定的Namespace。每个namespace下的资源对于其他namespace下的资源都是透明不可见的。因此在操作系统层面上看，就会出现多个pid相同的进程，但由于属于不同的namespace，所以它们之间并不冲突。而在用户层面上只能看到属于用户自己namespace下的资源
+
+| Namespace |       隔离功能       |      |
+| :-------: | :------------------: | ---- |
+|    MNT    | 磁盘挂载点、文件系统 |      |
+|    IPC    |      进程间通信      |      |
+|    Net    |         网络         |      |
+|    UTS    |        主机名        |      |
+|    PID    |         进程         |      |
+|   User    |         用户         |      |
+
+```c
+struct ipc_namespace {//用来隔离不同的IPC环境
+	atomic_t	count;//被引用的次数
+	struct ipc_ids	ids[3];//每个数组元素对应一种 IPC 机制：信号量、消息队列、共享内存
+ //       #define IPC_SEM_IDS 0   信号量
+ //       #define IPC_MSG_IDS 1   消息队列
+ //       #define IPC_SHM_IDS 2   共享内存
+    // 信号量、消息、共享内存、消息队列的管理结构
+	// 完整定义见https://www.ffutop.com/posts/2019-05-27-understand-kernel-11/
+};
+```
+
+一个进程也可以从属于不同的namespace，其`task_struct`结构中的`nsproxy`成员就负责维护当前进程的namespace信息。
+
+```c
+struct task_struct {
+    //其他成员
+	struct nsproxy *nsproxy;// namespace信息
+}  
+struct nsproxy {
+	atomic_t count;
+	struct uts_namespace *uts_ns;//UNIX Timesharing System,包含了运行内核的名称、版本、底层体系结构类型等信息
+	struct ipc_namespace *ipc_ns;//与进程间通信（IPC）有关的信息
+	struct mnt_namespace *mnt_ns;//已经装载的文件系统的视图
+	struct pid_namespace *pid_ns_for_children;//
+	struct net *net_ns;//网络相关的命名空间参数
+}; 
+```
+
+![Linux中进程的Namespce](img/Linux/Linux-Namespace.jpg)
 
 ## 信号 signal
 
@@ -630,11 +690,98 @@ Linux事先定义了一系列称为信号的变量用来指代某些事件。信
 
 ![Linux预定义的部分信号](img/Linux/Linux-signals.jpg)
 
+**信号屏蔽字**：每个进程都有一个屏蔽字，它规定了当前要阻塞递送到该进程的信号集。
+
 ### 相关API
 
+#### 信号发生函数
+
 ```c
-void (*signal(int signum, void (*handler))(int)))(int);
+#include <sys/types.h>
+#include <signal.h>
+int pause(void);//挂起进程直到进程接收到信号后才再开始执行
+int raise(int sig);//向本进程发送信号
+int kill(pid_t pid, int sig);//把信号sig发送给进程号为pid的进程
+//@Parameters
+//	pid: 接收信号sig的进程
+//	sig: 待发送的信号
+//@Return value
+//	成功时返回0；失败返回-1并设置error
+
+#include <unistd.h>
+unsigned int alarm(unsigned int seconds);//经过预定时间后向发送一个SIGALRM信号
+//Parameters:
+//	seconds: 延迟发送的时间，为0则取消所有已设置的发送SIGALRM的请求
+//@Return value
+//	失败返回-1；成功返回以前设置的闹钟时间的余留秒数
 ```
+
+#### 信号处理设置函数
+
+```c
+#include <signal.h>
+void (*signal(int sig, void (*handler))(int)))(int);//处理指定的信号
+//@Parameters
+//	sig: 所要处理的信号
+//	func: 类型为void (*)(int)的函数指针，该函数负责处理sig信号。可以取以下特殊值
+//		SIG_IGN:忽略信号 
+//		SIG_DFL:恢复信号的默认行为
+```
+
+#### 信号集设置
+
+```c
+int sigemptyset(sigset_t *set);//初始化信号集为空
+int sigfillset(sigset_t *set);//初始化信号集，该信号集包含所有预定义的信号
+int sigaddset(sigset_t *set, int signo);//向信号集中添加信号
+int sigdelset(sigset_t *set, int signo);//从信号集中删除信号
+//@Parameter
+//	set: 待作用的信号集
+//	signo: 待作用的信号
+//@Return value
+//	成功时返回0；失败时返回-1
+
+int sigismember(sigset_t *set, int signo);//验证信号是否属于信号集
+//@Parameter
+//	set: 待作用的信号集
+//	signo: 待作用的信号
+//@Return value
+//	是返回1；不是返回0；给定的信号无效返回-1
+
+int sigpromask(int how, const sigset_t *set, sigset_t *oset);//检测或更改当前进程的信号屏蔽字
+//@Parameter
+//	how: 对set的处理方法
+//		SIG_BLOCK: 将set中的信号加入到原信号集
+//		SIG_UNBLOCK: 将原信号集中属于set的信号剔除
+//		SIG_SETMARK: 用set取代原信号屏蔽字
+//	set: 新的信号集合
+//	oset: 用来保存旧的信号集合
+//@Return value
+//	成功返回1；how无效返回-1并设置errno
+
+int sigpending(sigset_t *set);//返回对于调用进程被阻塞不能递送和当前未决定的信号集
+int sigsuspend(const sigset_t *sigmask);//////////////////////////////////////////////
+```
+
+#### 信号动作
+
+```c
+struct sigaction{
+    void (*sa_handler)();//addr of signal handler, or SIG_IGN, or SIG_DFL
+    sigset_t sa_mask;//additional to block
+    int sa_flag;//signal options
+};
+
+int sigaction(int sig, const struct sigaction *act, struct sigaction *oact);//更加健壮的信号接口
+//@Parameters
+//	sig: 所要处理的信号
+//	act: 设置sig信号的动作
+//	oact: 保存sig信号的原处理动作
+//@Return value
+//
+```
+
+
 
 ### 信号的收发
 
@@ -644,7 +791,19 @@ void (*signal(int signum, void (*handler))(int)))(int);
 
 ### 信号处理
 
-信号会改变进程的原有控制顺序，对于接收到的信号进程可以采取执行默认操作、忽略和处理三种方式中的一种，要想处理信号必须提供一个**用户态信号处理函数**（ **`SIGSTOP` 和 `SIGKILL`**不能被阻塞和处理）。
+信号会改变进程的原有控制顺序，对于接收到的信号进程可以采取执行默认操作、忽略和处理三种方式中的一种.
+
+#### 处理信号
+
+要想处理信号必须提供一个**用户态信号处理函数**（ **`SIGSTOP` 和 `SIGKILL`**不能被阻塞和处理）。
+
+#### 延时处理
+
+接收到信号后不立即中断执行而是等待一段时间后再处理信号
+
+### 具体实现
+
+![进程如何管理信号](img/Linux/signal-manage.png)
 
 ## 管道
 
@@ -850,14 +1009,52 @@ struct shmid_kernel{
 
 ## 消息队列
 
-### 相关API
+### POSIX消息队列
 
-Linux提供的ipcs系列命令可以查看系统的消息队列。
+#### API
+
+```c
+#include <bits/mqueue.h>
+
+struct mq_attr{
+ long int mq_flags; /* Message queue flags. 0 or O_NONBLOCK */
+ long int mq_maxmsg; /* Maximum number of messages. */
+ long int mq_msgsize; /* Maximum message size. */
+ long int mq_curmsgs; /* Number of messages currently queued. */
+ long int __pad[4];
+};
+
+mqd_t mq_open(const char *name, int oflag, mode_t mode, struct mq_attr *attr);//创建或打开消息队列
+//@parameters
+//	name: 消息队列的名字
+//	oflag: 打开的方式，和 open函数的类似
+//		必选O_RDONLY，O_WRONLY，O_RDWR三者之一
+//		可选O_NONBLOCK，O_CREAT，O_EXCL
+//	mode: 可选参数，flag中含有O_CREAT标志且消息队列不存在时需要，设置访问权限
+//	attr: 可选参数，flag中含有O_CREAT标志且消息队列不存在时需要，用于给新队列设定某些属性，为空指针则默认属性
+//@Return value
+//	成功则返回消息队列描述符；失败返回-1
+
+mqd_t mq_close(mqd_t mqdes);//关闭消息队列
+mqd_t mq_unlink(const char *name);//删除消息队列
+mqd_t mq_getattr(mqd_t mqdes, struct mq_attr *attr);//获取消息队列参数
+mqd_t mq_setattr(mqd_t mqdes, struct mq_attr *newattr, struct mq_attr *oldattr);//设置消息队列参数
+
+mqd_t mq_send(mqd_t mqdes, const char *msg_ptr, size_t msg_len, unsigned msg_prio);//发送消息
+mqd_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned *msg_prio);//接收消息
+//@parameters
+//	msg_len: 消息体的长度，用作接收时要求大于等于队列中最大消息的大小
+//	msg_prio: 消息的优先级；它是一个小于 MQ_PRIO_MAX的数，数值越大，优先级越高。
+```
+
+### System V消息队列
+
+#### 相关API
 
 ```c
 int msgget(key_t key, int msgflg);//创建消息队列
 //@parameters
-//	key: 键名--用来为消息队列命名
+//	key: 键名、关键字--用来为消息队列命名获取描述符
 //	msgflg: 消息队列的访问权限
 //@Return value
 //	成功则返回一个以key命名的消息队列描述符；失败返回-1
@@ -899,23 +1096,132 @@ struct msgid_ds{
 
 struct my_message{//自定义的消息
     long int message_type; // 必须含有此域，用来标识不同的消息类型
-    /* The data you wish to transfer*/
+    //接下来是希望传输的数据
 };
 ```
 
 ### 实现
 
-### 小结
+#### [消息队列系统](https://www.cnblogs.com/zengyiwen/p/5b05df70da3299b79fe673d959b5fc16.html)
 
-```text
-1，消息队列是面向记录，其中的消息具有特定的格式以及特定的优先级
-2，消息队列独立于发送和接收进程，进程终止时，消息队列机器内容并不会被删除
-3，消息队列可以实现消息的随机查询，消息不一定要以先进先出的次序读取，也可以按消息的类型读取
-4，有足够权限的进程可以向队列中添加消息，被赋予读权限的进程则可以读走队列中的消息
-5，消息队列克服了信号承载信息量少，管道只能承载无格式字节流以及缓冲区大小受限等缺点
+```c
+struct ipc_ids {// 内核的全局数据结构用来管理报文队列
+	int size;
+	int in_use;//使用中的 IPC 对象数量
+	int max_id;
+	unsigned short seq;//用户空间 IPC 对象 ID
+	unsigned short seq_max;
+	struct semaphore sem;
+	spinlock_t ary;
+	struct ipc_id* entries;//指向一个ipc_id结构数组，数组的大小决定了消息队列的数目
+}msg_ids; //内核中的实例化对象msg_ids
+
+struct ipc_id {//代表一个消息队列
+	struct kern_ipc_perm* p;
+};
+
+struct kern_ipc_perm{
+	key_t		key;//键值
+	uid_t		uid;
+	gid_t		gid;
+	uid_t		cuid;
+	gid_t		cgid;
+	mode_t		mode; 
+	unsigned long	seq;
+};
+
+struct msg_queue {//每个报文队列的队列头
+	struct kern_ipc_perm q_perm;
+	time_t q_stime;			/* last msgsnd time */
+	time_t q_rtime;			/* last msgrcv time */
+	time_t q_ctime;			/* last change time */
+	unsigned long q_cbytes;		/* current number of bytes on queue */
+	unsigned long q_qnum;		/* number of messages in queue */
+	unsigned long q_qbytes;		/* max number of bytes on queue */
+	pid_t q_lspid;			/* pid of last msgsnd */
+	pid_t q_lrpid;			/* last receive pid */
+	struct list_head q_messages;
+	struct list_head q_receivers;
+	struct list_head q_senders;
+};
 ```
 
- 与命名管道相比，消息队列的优势在于，1、消息队列也可以独立于发送和接收进程而存在，从而消除了在同步命名管道的打开和关闭时可能产生的困难。2、同时通过发送消息还可以避免命名管道的同步和阻塞问题，不需要由进程自己来提供同步方法。3、接收程序可以通过消息类型有选择地接收数据，而不是像命名管道中那样，只能默认地接收。 
+**`q_messages`**：指向待读取的消息链表
+
+**`q_receivers`**：指向sleeping的接收者链表，表上的每个`msg_receiver`元素都有一个成员指向等待接受消息而阻塞的进程。
+
+**`q_senders`**：指向sleeping的发送者链表，表上的每个`msg_sender`元素都有一个成员指向等待发送消息而阻塞的进程。
+
+以上数据结构的关系如下图中所表示的那样，全局`ipc_ids`数据结构的实例对象`msg_ids`是负责管理系统中的所有消息队列，其指针`entries`指向一个`ipc_id`结构数组，数组中的每个元素代表一个消息队列，数组的长度代表系统支持的消息队列的数目，系统中的所有消息队列都可以在`msg_ids::entries`中找到访问入口。数组元素的成员指针指向一个`kern_ipc_perm`数据结构，每个消息队列头`msg_queue`中页有一个指向`kern_ipc_perm`结构的指针。
+
+![消息队列数据结构关系](img/Linux/msg-queue-kernal.png)
+
+每个消息队列本质上是**位于内核空间的消息链表**，链表的每个节点都是一条消息。每一条消息都有自己的消息类型（用大于0的整数表示），每种类型的消息都被对应的链表所维护，每个消息队列的连接情况如下图：消息类型为 0 的链表按照消息进入消息队列的顺序记录了所有消息加入队列的消息，每一个类别的链表记录了该类下的所有消息。
+
+![内核消息队列](img/Linux/msg_queue.png)
+
+#### 每个消息队列
+
+```c
+struct msgbuf {//用来发送和接受消息的消息缓冲区的结构
+	long mtype;         //消息的类型
+	char mtext[1];      //存放消息正文的数组
+};
+
+struct msg_msg {		//代表每一个消息
+	struct list_head m_list;//双向列表，通过这个变量连接队列中的消息成双向链表
+	long  m_type;		//消息的类型
+	int m_ts;           //消息长度
+	struct msg_msgseg* next;//指向本消息下一分片所在的位置
+	void *security;
+	//本页之后空间存储消息的分片数据
+};
+
+struct msg_msgseg {			//保存消息超出一页时的切片
+	struct msg_msgseg* next;//指向本消息下一分片所在的位置
+	//本页之后空间存储消息分片数据
+};
+
+struct msg_receiver {//睡眠的接受者进程
+    struct list_head    r_list;
+    struct task_struct  *r_tsk;//指向接收者进程描述符
+    int	r_mode;
+    long r_msgtype;
+    long r_maxsize;
+    struct msg_msg *r_msg;
+};
+
+struct msg_sender {//睡眠的发送者进程
+    struct list_head    list;
+    struct task_struct  *tsk;
+    size_t msgsz;
+};
+```
+
+**`msg_msg`**：分为**控制结构区和数据区**两部分，每个`msg_msg`的大小**上限为一页**（小于页则为实际大小，大于一页将把**数据区切分**放到`msg_msg`的数据区和`msg_msgseg`的数据区）。
+
+**`msg_msgseg`**：存放被分片后的剩余的消息，也分为控制区和数据区。
+
+![单个消息队列的组织](img/Linux/msg-queue-relashion.png)
+
+#### 整体架构
+
+![内核实现的消息队列的总体结构](img/Linux/msg-rpc-outline.png)
+
+### 注意事项
+
+**生命期**：消息队列的存在独立于进程，只要没有显式的删除消息队列，消息队列就**随内核一直存在**。
+
+**大小限制**：**消息大小和队列的容量**分别受到`MSGMAX` 和 `MSGMNB`的限制（字节为单位）。
+
+**拷贝开销**：每次数据的写入和读取都需要经过**用户态与内核态之间**的拷贝过程。
+
+**数据获取**：消息队列不一定按照FIFO顺序读，支持**乱序读出**（不同类型间的乱序），内核会自动删除被读出的消息。
+
+## 信号量
+
+**信号量其实是一个整型的计数器，主要用于实现进程间的互斥与同步，而不是用于缓存进程间通信的数据**。附带的PV操作具有原子性。
+
 ## 总结
 
 ![Linux进程通信机制](img/Linux/process-communication.png)
@@ -928,16 +1234,15 @@ struct my_message{//自定义的消息
 |  信号量  |      信号量无法在内核空间和用户空间之间使用。      |
 |  套接字  |    套接字在硬、软中断中不可以无阻塞地接收数据。    |
 
-|   方式   |    数据量    | 进程关系 |    模式    | 同步 |
-| :------: | :----------: | :------: | :--------: | :--: |
-|   信号   |  预定义事件  | 任何进程 |   半双工   |      |
-|  信号量  |              |          |            |      |
-| 匿名管道 | 循环使用一页 | 亲缘进程 |   半双工   |  Y   |
-| 命名管道 | 循环使用一页 | 任何进程 |   半双工   |  Y   |
-|  信号量  |              |          |            |      |
-| 共享内存 |    自定义    | 任何进程 | 无同步支持 |  N   |
-| 消息队列 |              | 任何进程 |            |      |
-|  套结字  |              |          |            |      |
+|   方式   |        数据量        |      进程关系      |  消息格式  |    模式    | 同步 | 生命期 | K/U拷贝 |    补充    |
+| :------: | :------------------: | :----------------: | :--------: | :--------: | :--: | :----: | :-----: | :--------: |
+|   信号   |      预定义事件      |      任何进程      |    整形    |   半双工   |      |        |         | 唯一的异步 |
+|  信号量  |                      |                    |            |            |      |        |         |            |
+| 匿名管道 |     循环使用一页     |      亲缘进程      |   字节流   |   半双工   |  Y   | 随进程 |         |            |
+| 命名管道 |     循环使用一页     |      任何进程      |   字节流   |   半双工   |  Y   |        |         |            |
+| 共享内存 |        自定义        |      任何进程      |   字节流   | 无同步支持 |  N   |        | 无拷贝  |            |
+| 消息队列 | 消息和消息数量有上限 |      任何进程      | 自定义消息 |            |      |        | 虚拷贝  |            |
+|  套结字  |                      | 可跨主机的任何进程 |            |            |      |        |         |            |
 
 
 # 内存布局
