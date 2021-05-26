@@ -688,49 +688,121 @@ struct nsproxy {
 
 Linux事先定义了一系列称为信号的变量用来指代某些事件。信号是一种**更高层的**软件形式的异常，不同于陷阱、中断和异常等**由内核透明处理的低层异常**的机制，信号的处理可以由用户完成。当发生某一事件时，内核会向进程通告该事件对应的信号，用户程序决定如何处理信号，如果不处理就会执行OS默认的处理方式。
 
-![Linux预定义的部分信号](img/Linux/Linux-signals.jpg)
+### 信号类别与状态
 
-**信号屏蔽字**：每个进程都有一个屏蔽字，它规定了当前要阻塞递送到该进程的信号集。
+#### 信号分类 ![Linux预定义的部分信号](img/Linux/Linux-signals.jpg)
 
-### 相关API
+|         信号类别         |    来源     |            特点            |
+| :----------------------: | :---------: | :------------------------: |
+| 不可靠/普通信号$[1, 31]$ | 早期`Unix`  | 不支持排队可能导致信号丢失 |
+| 可靠/实时信号$[34, 64]$  | `POSIX`标准 |          支持排队          |
 
-#### 信号发生函数
+#### 信号状态
+
+|     状态      |                             含义                             |
+| :-----------: | :----------------------------------------------------------: |
+|  未决pending  |                    从产生到抵达之间的状态                    |
+| 递达delivery  |     实际执行信号处理信号的动作（三种：忽略、默认、处理）     |
+| **阻塞block** | 收到信号不立即处理，此时信号将**保持未决状态**，解除阻塞后才执行抵达动作 |
+
+### 信号产生
+
+信号可以由组合按键触发、硬件异常触发（内核将异常转为信号发送给进程）、调用信号发生函数触发、内核检测到某些软件条件发生等条件触发。
+
+#### 信号发生API
+
+##### 与本进程相关
 
 ```c
-#include <sys/types.h>
-#include <signal.h>
-int pause(void);//挂起进程直到进程接收到信号后才再开始执行
-int raise(int sig);//向本进程发送信号
-int kill(pid_t pid, int sig);//把信号sig发送给进程号为pid的进程
-//@Parameters
-//	pid: 接收信号sig的进程
-//	sig: 待发送的信号
+void abort(void);//向当前进程发送SIGABRT信号，总是成功所以无返回值
+
+int raise(int sig);//向本进程发送信号sig
 //@Return value
 //	成功时返回0；失败返回-1并设置error
 
-#include <unistd.h>
-unsigned int alarm(unsigned int seconds);//经过预定时间后向发送一个SIGALRM信号
+unsigned int alarm(unsigned int seconds);//经过预定时间后向本进程发送一个SIGALRM信号
 //Parameters:
 //	seconds: 延迟发送的时间，为0则取消所有已设置的发送SIGALRM的请求
 //@Return value
 //	失败返回-1；成功返回以前设置的闹钟时间的余留秒数
 ```
 
-#### 信号处理设置函数
+##### 向其他实体发送信号
 
 ```c
-#include <signal.h>
-void (*signal(int sig, void (*handler))(int)))(int);//处理指定的信号
+int kill(pid_t pid, int sig);//把信号sig发送给进程或进程组
 //@Parameters
-//	sig: 所要处理的信号
-//	func: 类型为void (*)(int)的函数指针，该函数负责处理sig信号。可以取以下特殊值
-//		SIG_IGN:忽略信号 
-//		SIG_DFL:恢复信号的默认行为
+//	pid: 接收信号sig的进程
+//		pid>0: 将信号传给进程识别码为pid 的进程
+//		pid=0: 将信号传给和当前进程相同进程组的所有进程 
+//		pid=-1: 将信号广播传送给系统内所有的进程 
+//		pid<-1: 将信号传给进程组识别码为pid绝对值的所有进程 
+//	sig: 待发送的信号
+//@Return value
+//	成功时返回0；失败返回-1并设置error
+
+int killpg(int pgrp, int sig);//向进程组发送信号
+//@Parameters
+//	prgp: 将信号发送到进程组pgrp中的每个进程
+//@Return value
+//	成功时返回0；失败返回-1并设置error
+
+int tkill(int tid, int sig);//过时的接口，一般不使用
+int tgkill(int tgid, int tid, int sig);
+//glibc未封装该系统调用，需要以系统调用形式使用，如下:
+ret = syscall(SYS_tgkill, tgid, sig);//向线程组ID是tgid、线程ID为tid的线程发送信号
+
+int pthread_kill(pthread_t thread, int sig);//向同一个进程内的线程发送信号
+//@Parameters
+//	thread: 将信号发往指定的线程
+//	sig: 待发送的信号，0不发送任何信号
+//@Return value
+//	成功时返回0；失败返回错误码
+//	向退出的线程发送信号引发未定义的错误
+
+union sigval {
+    int   sival_int;
+	void *sival_ptr;
+};
+int sigqueue(pid_t pid, int sig, const union sigval value);//新的向进程发送信号的系统调用,主要针对实时信号提出、支持信号带有参数,
+//@Parameters
+//	pid: 接收信号sig的进程
+//	sig: 待发送的信号，0用于检测目标进程存在性
+//	value: 伴随数据，可以向目标进程发送一个整形数据或者指针（需处理函数启用SA_SIGINFO标志）
+//@Return value
+//	成功时返回0；失败返回-1并设置error
 ```
 
-#### 信号集设置
+### 信号处理
+
+用户态信号处理函数**不能接受和处理`SIGSTOP、SIGKILL`**信号。`SIGKILL`是为 root 提供了一种使进程**强制终止**方法，此时将会有操作系统直接回收该进程占用的资源，对于一些保存状态的应用就可能会导致异常。`SIGSTOP`用于 Shell 的任务管理，不能被用户屏蔽。[参考来源](https://gohalo.me/post/kernel-signal-introduce.html)
+
+####  处理时机
+
+进程**不会立即处理收到的信号（紧急信号除外），而是在恰当时机进行处理**（多在内核态返回用户态时，也可能在中断返回时）。其`task_struct`会对每个信号使用两个位记录状态，一个指针记录对信号的处理方法。
+
+![进程控制块对信号的记录](img/Linux/signal-task-struct-stuff.png)
+
+![信号处理的时机](img/Linux/signal-kenel-process.png)
+
+#### 信号屏蔽
+
+**非实时信号：**对于不支持排队的非实时信号，内核会为每个信号维护一个信号掩码，当非实时信号被**阻塞期间被传递过多次**，**解除阻塞后该信号将仅被传递一次**。
+
+**实时信号**：采用**队列化处理**，一个实时信号的多个实例发送给进程，**信号将会传递多次**。同时可以在发送信号时传递数据，不同实时信号的传递顺序是固定的，**优先传递信号编号小的**。
+
+##### 信号集与信号屏蔽字
+
+**信号集**是用来描述信号的集合，每个信号占用一位，总共 64 位，Linux 所支持的所有信号可以全部或部分的出现在信号集中，主要与信号阻塞相关函数配合使用。每个进程都有一个用来描述哪些信号递送到进程时将被阻塞的信号集，这个信号集就称为**信号屏蔽字（显示阻塞）**。信号屏蔽字中的所有信号在递送到进程后都将被阻塞，即对到来的信号先不传递给当前进程，一旦信号不阻塞，信号又可以被重新送达到当前进程。同时进程还含有隐式阻塞机制。
+
+![信号屏蔽](img/OS/signal-block.webp)
+
+##### 信号集API
 
 ```c
+typedef unsigned long int __sigset_t;
+typedef __sigset_t sigset_t;
+
 int sigemptyset(sigset_t *set);//初始化信号集为空
 int sigfillset(sigset_t *set);//初始化信号集，该信号集包含所有预定义的信号
 int sigaddset(sigset_t *set, int signo);//向信号集中添加信号
@@ -748,60 +820,125 @@ int sigismember(sigset_t *set, int signo);//验证信号是否属于信号集
 //@Return value
 //	是返回1；不是返回0；给定的信号无效返回-1
 
-int sigpromask(int how, const sigset_t *set, sigset_t *oset);//检测或更改当前进程的信号屏蔽字
+int sigpromask(int how, const sigset_t *set, sigset_t *oset);//检测或更改当前进程的信号集
 //@Parameter
 //	how: 对set的处理方法
 //		SIG_BLOCK: 将set中的信号加入到原信号集
 //		SIG_UNBLOCK: 将原信号集中属于set的信号剔除
-//		SIG_SETMARK: 用set取代原信号屏蔽字
+//		SIG_SETMARK: 将set参数指向的信号集中的信号设置为信号掩码
 //	set: 新的信号集合
 //	oset: 用来保存旧的信号集合
 //@Return value
 //	成功返回1；how无效返回-1并设置errno
 
-int sigpending(sigset_t *set);//返回对于调用进程被阻塞不能递送和当前未决定的信号集
-int sigsuspend(const sigset_t *sigmask);//////////////////////////////////////////////
+int sigpending(sigset_t *set);//读取当前进程的未决信号集
+//@Parameters
+//	set: 保存当前进程的未决信号集
+//@Return value
+//	成功返回1；出错返回-1
 ```
 
-#### 信号动作
+#### 简单信号处理
+
+```c
+#include <signal.h>
+void (*signal(int sig, void (*handler))(int)))(int);//处理指定的信号
+//@Parameters
+//	sig: 所要处理的信号
+//	func: 类型为void (*)(int)的函数指针，该函数负责处理sig信号。可以取以下特殊值
+//		SIG_IGN:忽略信号 
+//		SIG_DFL:恢复信号的默认行为
+```
+
+**注意**：`signal`设置的信号处理函数在执行时会**阻塞正在处理的信号，不阻塞其它信号**。即当前处理信号的控制流可能被转移，**可能会丢失信号**。
+
+#### 高级信号处理
+
+在执行回调函数处理信号期间，使用`sa_mask`临时的去替代进程的阻塞信号集，保证回调函数执行完毕，然后**再解除替代**，这个过程仅仅发生在回调函数执行期间，是临时性的设置。在使用`sigaction`时`sa_sigaction` 与 `sa_handler` 只能取其一，其中前者多用于实时信号，可以保存信息；同时设置 `sa_flags` 为 `SA_SIGINFO` 用于接收其它进程发送的数据，保存在 `siginfo_t` 结构体中。
 
 ```c
 struct sigaction{
-    void (*sa_handler)();//addr of signal handler, or SIG_IGN, or SIG_DFL
-    sigset_t sa_mask;//additional to block
-    int sa_flag;//signal options
+    void (*sa_handler)();//信号处理函数的指针，可以是特殊值SIG_IGN、SIG_DFL
+	void (*sa_sigaction)(int, siginfo_t *, void *);//备选信号处理函数指针，当flag启用SA_SIGINFO时
+    sigset_t sa_mask;//设置在处理某信号时暂时将sa_mask指定的信号集先阻塞，默认阻塞当前信号
+    int sa_flag;//设置信号处理的其他相关操作，可以取以下值
+//		SA_RESTART: 如果信号中断了进程的某个系统调用，则系统自动启动该系统调用
+//		SA_NODEFER: 信号处理函数运行处理信号时，内核将不阻塞该信号
+//		SA_RESETHAND: 当调用信号处理函数时，将信号的处理函数重置为缺省值SIG_DFL
+//		SA_SIGINFO: 使用 sa_sigaction 函数作为信号处理函数
 };
 
 int sigaction(int sig, const struct sigaction *act, struct sigaction *oact);//更加健壮的信号接口
 //@Parameters
-//	sig: 所要处理的信号
-//	act: 设置sig信号的动作
-//	oact: 保存sig信号的原处理动作
+//	sig: 除SIGKILL及SIGSTOP外所要处理的信号
+//	act: 设置处理sig信号的新动作
+//	oact: 保存处理sig信号的原处理动作
 //@Return value
-//
+//	成功返回1；how无效返回-1并设置errno
 ```
 
+#### `signal` VS `sigactioon`
 
+|     方式     | 安全性 |  本信号  | 其他信号 |      响应函数有效性      |   信号排队   | 额外消息 |
+| :----------: | :----: | :------: | :------: | :----------------------: | :----------: | :------: |
+| 传统`signal` |   低   | 自动阻塞 |  不阻塞  | 一次，自动重置为默认方式 |   都不排队   |  不支持  |
+| `sigaction`  |  更高  | 自动阻塞 | 手动阻塞 |         一直有效         | 排队实时信号 |   支持   |
 
-### 信号的收发
+#### 控制流API
 
-**产生**：OS可以**将硬件异常包装成信号**交给进程、也可以由进程调用函数产生信号。
+##### 一般流控制
 
-**接收**：每个进程有一个待处理信号的集合（**隐式阻塞**：同类待处理信号个数≤1），进程也可以显式阻塞某些信号。
+```c
+int pause(void);//进程挂起进入休眠状态，直到进程接收到信号后且信号函数处理了信号
+//@Return value
+//	如信号动作为终止进程(一般默认)，则进程终止，pause() 没有机会返回
+//	如信号动作为忽略信号，进程继续处于挂起状态，pause() 不返回
+//	如信号动作为用户处理函数，则调用了信号处理函数之后 pause() 返回 -1，其 errno 设置为 EINTR 
 
-### 信号处理
+unsigned int sleep(unsigned int second);//挂起调用中的进程，直到过了预定时间或收到一个信号并从信号处理程序返回。
+int usleep(useconds_t usec);
+int nanosleep(const struct timespec *req, struct timespec *rem);
+//Parameters:
+//	seconds: 延迟发送的时间，为0则取消所有已设置的发送SIGALRM的请求
+//@Return value
+//	失败返回-1；成功返回以前设置的闹钟时间的余留秒数
 
-信号会改变进程的原有控制顺序，对于接收到的信号进程可以采取执行默认操作、忽略和处理三种方式中的一种.
+int sigsuspend(const sigset_t *sigmask);//先替换进程的信号屏蔽字后挂起进程，程序将在信号处理函数执行完毕后返回重置信号屏蔽字后继续执行。sigsuspend将重置信号集、捕捉信号、信号处理函数集成到一起
+//@Parameters
+//	sigmask: 替换原信号集的新信号集
+//@Return value
+//	信号处理终止程序则不返回，否则返回-1并设置errno为EINTR
+```
 
-#### 处理信号
+##### 跳转
 
-要想处理信号必须提供一个**用户态信号处理函数**（ **`SIGSTOP` 和 `SIGKILL`**不能被阻塞和处理）。
+```c
+int system(const char *string);//阻塞进程直到调用“/bin/sh -c command”执行特定的命令完毕
+//Parameters:
+//	string: 要执行的shell命令
+//@Return value
+//	成功执行返回命令的退出码，其他错误返回-1或127
 
-#### 延时处理
+int sigsetjmp(sigjmp_buf env, int savemask);//标记目前地址并保存当前堆栈环境，超越goto实现非局部跳转
+//@Parameters
+//	env: 保存目前堆栈环境，一般为全局变量
+//	savemask: 设置对env中屏蔽字的处理
+//		0: 不保存、不恢复屏蔽字；
+//		1: 保存、恢复屏蔽字；
+//@Return value
+//	0代表标记成功；非0代表从siglongjmp跳转返回
+void siglongjmp(sigjmp_buf env, int val);//回到之前标记的地址并恢复堆栈环境
+```
 
-接收到信号后不立即中断执行而是等待一段时间后再处理信号
+### 信号与线程组
+
+进程中的所有线程（即线程组）都会收到信号，但线程组中**只有一个线程会响应处理该信号**，但致命信号会使所有的线程都被杀死。
+
+![信号与线程组\进程](img/Linux/signal_kill.png)
 
 ### 具体实现
+
+如果一个信号还未被递达那么就处于未决(pending)状态。对于每一个目标进程，内核会用一个**位图(`struct sigset_t`)来记录信号的处理状态**，内核先检查待发送的信号在进程位图中的状态，如果处于未决状态，内核会将实时信号放入对应的未决信号队列`struct sigpending`，如果不是实时信号就丢弃；如果对应位图为空则加入信号。
 
 ![进程如何管理信号](img/Linux/signal-manage.png)
 
