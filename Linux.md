@@ -1,5 +1,3 @@
-q	
-
 # 设计哲学
 
 ## [一切皆文件](https://cloud.tencent.com/developer/article/1512391)
@@ -357,7 +355,7 @@ int munmap(void *addr, size_t length);//释放内存映射区
 
 共享匿名页在内核演变为文件映射缺页异常（伪文件系统），
 
-**（二）已分配虚拟页，未映射到物理页**：调用内核空间的系统调用函数mmap（不同于用户空间函数），实现文件物理地址和进程虚拟地址的一一映射关系
+**（二）已分配虚拟页，未映射到物理页**：调用内核空间的系统调用函数`mmap`（不同于用户空间函数），实现文件物理地址和进程虚拟地址的一一映射关系
 
 1. 通过**文件描述符**在内核的**已打开文件表**索引到**文件结构体**。
 2. 通过文件结构体的**`file_operation`**域调用该文件**驱动提供的`int mmap(struct file *filp, struct vm_area_struct *vma)`函数**，该函数会找到文件的**`inode`定位**到地址。
@@ -625,23 +623,26 @@ int clone(int (*fn)(void *), void *child_stack, int flags, void *arg);
 
 # 进程通信
 
-Linux提供的`ipcs`和`ipcrm`分别用于查看与删除系统中的System V IPC，Linux内核为系统IPC提供了一个统一的系统调用`ipc()`
+## [进程通信的三种模型](http://ruleless.github.io/2016/06/09/unix-ipc-basic.html)
 
-```shell
- ipcs [-s -m -q] -i id
- ipcrm [ [-q msqid] [-m shmid] [-s semid] [-Q msgkey] [-M shmkey] [-S semkey] ... ]
-```
+![进程间的数据共享有三种方式](img/Linux/ipc-data-sharing.png)
 
-```c
-int ipc(unsigned int call,int firtst,int second,int third,void*ptr,int firth);
-//@parameters
-//	call: 具体的操作码，可以取以下宏
-//		信号量：SEMOP、SEMGET、SEMCTL
-//		消息队列：MSGSND、MSGRCV、MSGGET、MSGCTL
-//		共享内存：SHMAT、SHMDT、SHMGET、SHMCTL
-```
+1. **通过访问文件的方式**：通常需要某种形式的同步，一般用文件记录锁。
 
-## [Namespace](https://blog.csdn.net/energysober/article/details/89303542)
+2. **共享驻留于内核中的某些数据**： **管道、FIFO、System V消息队列、System V信号量** 属于这类型的数据共享方式； **Posix消息队列、Posix信号量** 在某些系统的实现也属于这种。
+
+3. **双方都能访问的共享内存区**：若该共享内存区被映射到了各自进程的地址空间，那么这两个进程将能不通过内核（系统调用）而实现交互。 共享该内存区的进程需要某种形式的同步，信号量是常用的选择。
+
+## Linux支持
+
+Linux提供的`ipcs`和`ipcrm`分别用于查看与删除系统中的System V IPC：
+
+   ```shell
+    ipcs [-s -m -q] -i id
+    ipcrm [ [-q msqid] [-m shmid] [-s semid] [-Q msgkey] [-M shmkey] [-S semkey] ... ]
+   ```
+
+### [Namespace](https://blog.csdn.net/energysober/article/details/89303542)
 
 Linux Namespaces机制提供一种资源隔离方案。PID、IPC、Network等系统资源不再是全局性的，而是属于某个特定的Namespace。每个namespace下的资源对于其他namespace下的资源都是透明不可见的。因此在操作系统层面上看，就会出现多个pid相同的进程，但由于属于不同的namespace，所以它们之间并不冲突。而在用户层面上只能看到属于用户自己namespace下的资源
 
@@ -1041,13 +1042,48 @@ if(pipefd[0] != STDIN_FILENO){
 
 将**多个进程的虚拟地址映射到同一块物理地址**上，这样进程对自己空间中作为共享内存的一段空间的操作将对其他进程可见，从而实现进程间的通信。共享内存**有两种实现方案**，一种`system V`基于`shm`文件系统（`tmpfs`），一种基于`mmap`系统调用创建共享内存映射。
 
-### 基于`shm`
+### System V实现
 
-#### API
+#### 数据结构
+
+~~在**老版本的Linux**中每一个新创建的**共享内存对象都用一个`shmid_ds`数据结构来表达**。系统中所有的`shmid_ds`数据结构的指针都保存在`shm_segs[SHMMNI]`向量表（长度为`SHMMNI:128`，所以**系统支持的基于`shm`的共享内存个数有限**）中。~~
 
 ```c
-#include < sys/shm.h>
+/*// Obsolete, used only for backwards compatibility and libc5 compiles
+static struct shmid_ds *shm_segs[SHMMNI];
 
+ struct shmid_ds {
+	struct ipc_perm shm_perm;//操作权限
+	int shm_segsz;//段的大小（以字节为单位)
+	__kernel_time_t shm_atime, shm_dtime, shm_ctime;//上一次shat、shdt、change的时间点
+	__kernel_ipc_pid_t shm_cpid, shm_lpid;//该共享内存的创建者和上次使用者
+	unsigned short shm_nattch;	//当前附加到该段的进程的个数(即使用该共享内存的进程个数)
+	//其他数据
+};*/
+
+struct shmid_kernel{//每一个共享内存区的控制结构，实现存储管理和文件系统的结合
+	struct kern_ipc_perm shm_perm;
+	struct file *shm_file;//将被映射文件的文件描述符
+	int id;
+	unsigned long shm_nattch;//连接到这块共享内存的进程数
+	unsigned long shm_segsz;//该共享内存大小，字节为单位
+	time_t shm_atim, shm_dtim, shm_ctim;//上一次shat、shdt、change的时间点
+	pid_t shm_cprid, shm_lprid;//该共享内存的创建者和上次使用者
+};
+
+struct shm_file_data {//存放tmpfs中创建的内存文件信息
+	int id;
+	struct ipc_namespace *ns;
+	struct file *file;
+	const struct vm_operations_struct *vm_ops;
+};
+```
+
+#### [操作](https://blog.csdn.net/Morphad/article/details/9148437)
+
+##### 创建
+
+```c
 int shmget(key_t key, size_t size, int shmflag);//创建共享内存
 //@Parameters
 //	key: 非0，
@@ -1055,7 +1091,15 @@ int shmget(key_t key, size_t size, int shmflag);//创建共享内存
 //	shmflag: 权限标志，支持mode_t和0644之类的权限控制做或操作
 //@Return value
 //	成功则返回一个共享内存描述符；失败返回-1
+```
 
+内核保证`shmget`获得或创建一个共享内存区，并初始化该共享内存区相应的`shmid_kernel`结构。同时还在**特殊文件系统`tmpfs`**中创建并打开一个同名文件，并在内存中建立起该文件的相应`dentry`及`inode`结构，**新打开的文件不属于任何一个进程**（任何进程都可以访问该共享内存区）。
+
+##### 使用
+
+###### 映射到进程空间
+
+```c
 void *shmat(int shm_id, const void *shm_addr, int shmflg);//把共享内存连接到当前进程的地址空间,启动对该共享内存的访问。
 //@Parameters
 //	shm_id: shmget函数返回的共享内存标识
@@ -1063,13 +1107,17 @@ void *shmat(int shm_id, const void *shm_addr, int shmflg);//把共享内存连�
 //	shmflag: 组标志位，通常为0。
 //@Return value
 //	成功时返回一个指向共享内存第一个字节的指针；失败返回-1
+```
 
-int shmdt(const void *shmaddr);//将共享内存从当前进程中分离,当前进程不能够在使用共享内存，但内存仍属于进程
-//@Parameters
-//	shm_addr: shmat返回的指向共享内存的指针
-//@Return value
-//	成功返回0；失败返回-1；
+共享内存主要涉及**`tmpfs`文件与`shm`文件**两种文件，一个共享内存对应一个`tmpfs`文件，内核借助`tmpfs`的**文件映射**功能（` do_mmap->do_mmap_pgoff->mmap_region->mmap`）直接将共享内存映射到进程地址空间，有多少个进程`attach`到共享内存就有多少个`shm`文件。即**`共享内存:tmpfs文件:shm文件:共享进程数 = 1:N:N`**。通过`shm`文件的设计起到相当于引用计数的功能，只有所有进程`detach`各自的`shm`文件后，内核才会删除IPC资源。
 
+~~内核会为每个申请使用该共享内存的进程**创建一个新的`vm_area_stuct`结构**用来描述该共享内存，用户可以干预该共享内存在进程的虚拟地址空间的位置，进程将内核创建的描述共享内存的`vm_area_struct`**连接到自己的`mm_struct`结构**中供进程寻址使用，同时也要**连接到`attaches`链表的末端**。~~
+
+~~![shm_segs向量表](img/Linux/shm_segs-vector.jpg)~~
+
+###### 读写
+
+```c
 int shmctl(int shm_id, int command, struct shmid_ds *buf);//控制共享内存
 //@Parameters
 //	shm_id: shmget函数返回的共享内存标识符
@@ -1079,53 +1127,28 @@ int shmctl(int shm_id, int command, struct shmid_ds *buf);//控制共享内存
 //	
 ```
 
-#### 内部实现
-
-每一个新创建的**共享内存对象都用一个`shmid_kernel`数据结构来表达**。系统中所有的`shmid_kernel`数据结构都保存在`shm_segs`向量表（长度为`SHMMNI:128`，所以**系统支持的基于`shm`的共享内存个数有限**）中，该向量表的每一个元素都是一个指向`shmid_kernel`数据结构的指针。`shmid_kernel`结构中的`shmid_ds`域记录该共享内存区的认证信息。`shmid_kernel`的`attaches`链表记录了使用该物理内存的各进程的虚拟内存区域的信息。
-
-内核会为每个申请使用该共享内存的进程**创建一个新的`vm_area_stuct`结构**用来描述该共享内存，用户可以干预该共享内存在进程的虚拟地址空间的位置，进程将内核创建的描述共享内存的`vm_area_struct`**连接到自己的`mm_struct`结构**中供进程寻址使用，同时也要**连接到`attaches`链表的末端**。
-
-![shm_segs向量表](img/Linux/shm_segs-vector.jpg)
-
-![进程如何获取使用shm](img/Linux/shm-attach.gif)
-
-##### 管理源码
+###### 解除映射
 
 ```c
-#include <linux/shm.h>
-
-struct shmid_kernel{
-    struct shmid_ds u;
-    unsigned long shm_npages;	//该共享内存区域的大小，以页为单位。
-    unsigned long *shm_pages;	//指向共享内存对象的每个页面的指针构成的数组
-    struct vm_area_struct *attaches;	//使用该共享内存的各进程的虚拟内存区域指针构成的链表
-};
-
- struct shmid_ds {
-    struct ipc_perm shm_perm;	//操作权限
-    int shm_segsz;				//段的大小（以字节为单位
-    __kernel_time_t shm_atime;  /* last attach time */
-    __kernel_time_t shm_dtime;  /* last detach time */
-    __kernel_time_t shm_ctime;  /* last change time */
-    __kernel_ipc_pid_t shm_cpid; /* pid of creator */
-    __kernel_ipc_pid_t shm_lpid; /* pid of last operator */
-    unsigned short shm_nattch;	//当前附加到该段的进程的个数(即使用该共享内存的进程个数)
-    unsigned short shm_unused;   /* compatibility */
-    void *shm_unused2;           /* ditto - used by DIPC */
-    void *shm_unused3;           /* unused */
-};
+int shmdt(const void *shmaddr);//将共享内存从当前进程中分离,当前进程不能够在使用共享内存，但内存仍属于进程
+//@Parameters
+//	shm_addr: shmat返回的指向共享内存的指针
+//@Return value
+//	成功返回0；失败返回-1；
 ```
 
-### [基于`mmap`](# 内存映射：`mmap()`)
+查找共享内存映射到进程地址空间的虚拟地址内存段vma，移除共享内存在进程地址空间的映射。
+
+### [Posix实现](# 内存映射：`mmap()`)
 
 ### 方案总结
 
-|        |               数据写回                |    数据持久性    | 进程中止的影响 |
-| ------ | :-----------------------------------: | :--------------: | :------------: |
-| `shm`  | 基于`shm`文件系统中的文件，不写回磁盘 | 不删则随内核存在 |     需考虑     |
-| `mmap` |      映射普通文件，可以写回磁盘       |    随文件存在    |    不用考虑    |
+|  风格   |  基础  |               数据写回                |    数据持久性    | 进程中止的影响 |
+| :-----: | :----: | :-----------------------------------: | :--------------: | :------------: |
+| SystemV | `shm`  | 基于`shm`文件系统中的文件，不写回磁盘 | 不删则随内核存在 |     需考虑     |
+|  Posix  | `mmap` |      映射普通文件，可以写回磁盘       |    随文件存在    |    不用考虑    |
 
-## Socket
+## BSD Socket
 
 ### Unix流式Socket
 
@@ -1152,7 +1175,7 @@ struct mq_attr{
 
 mqd_t mq_open(const char *name, int oflag, mode_t mode, struct mq_attr *attr);//创建或打开消息队列
 //@parameters
-//	name: 消息队列的名字
+//	name: 消息队列的名字，形如/xxx
 //	oflag: 打开的方式，和 open函数的类似
 //		必选O_RDONLY，O_WRONLY，O_RDWR三者之一
 //		可选O_NONBLOCK，O_CREAT，O_EXCL
@@ -1175,59 +1198,6 @@ mqd_t mq_receive(mqd_t mqdes, char *msg_ptr, size_t msg_len, unsigned *msg_prio)
 
 ### System V消息队列
 
-#### 相关API
-
-```c
-int msgget(key_t key, int msgflg);//创建消息队列
-//@parameters
-//	key: 键名、关键字--用来为消息队列命名获取描述符
-//	msgflg: 消息队列的访问权限
-//@Return value
-//	成功则返回一个以key命名的消息队列描述符；失败返回-1
-
-int msgsend(int msgid, const void *msg_ptr, size_t msg_sz, int msgflg);//将消息注入消息队列
-//@parameters
-//	msgid: msgget函数返回的消息队列标识符
-//	msg_ptr: 指向待发送消息的指针，要求该消息结构是以一个长整型成员变量开始的结构体
-//	msg_sz: msg_ptr指向的消息的长度（而非结构体的长度）
-//	msgflg: 控制当前消息队列满或队列消息到达系统范围的限制时将要发生的事情
-//@Return value
-//	失败返回-1；成功返回0并将消息副本写入消息队列
-
-int msgrcv(int msgid, void *msg_ptr, size_t msg_sz, long int msgtype, int msgflg);//从消息队列获取消息
-//@parameters
-//	msgtype: 
-//		0: 获取消息队列中的第一个消息
-//		>0: 获取匹配消息类型的第一个消息
-//		<0: 获取类型等于或小于msgtype的绝对值的第一个消息
-//	msgflg: 控制当队列中没有相应类型的消息可以接收时将发生的事情
-//@Return value
-//	失败时返回-1；成功返回被复制到msg_ptr中的字节数并消除消息队列中的相应消息
-
-int msgctl(int msgid, int command, struct msgid_ds *buf);//控制消息队列
-//@parameters
-//	command: 将要采取的动作，可以取3个值
-//		IPC_STAT: 用消息队列的当前关联值覆盖msgid_ds的值
-//		IPC_SET: 把消息列队的当前关联值设置为msgid_ds结构中给出的值（需要进程有足够权限）
-//		IPC_RMID: 删除消息队列
-//	buf: 指向msgid_ds结构的指针
-//@Return value
-//	 成功时返回0；失败时返回-1
-
-struct msgid_ds{
-    uid_t shm_perm.uid;
-    uid_t shm_perm.gid;
-    mode_t shm_perm.mode;
-};
-
-struct my_message{//自定义的消息
-    long int message_type; // 必须含有此域，用来标识不同的消息类型
-    //接下来是希望传输的数据
-};
-```
-
-### 实现
-
 #### [消息队列系统](https://www.cnblogs.com/zengyiwen/p/5b05df70da3299b79fe673d959b5fc16.html)
 
 ```c
@@ -1249,7 +1219,7 @@ struct msg_queue {//每个报文队列的队列头
 
 **`q_messages`**：指向待读取的消息链表
 
-**`q_receivers`**：指向sleeping的接收者链表，表上的每个`msg_receiver`元素都有一个成员指向等待接受消息而阻塞的进程。
+**`q_receivers`**：指向sleeping的接收者链表，表上的每个`msg_receiver`元素都有一个成员指向等待接受消息而阻塞的进程。		
 
 **`q_senders`**：指向sleeping的发送者链表，表上的每个`msg_sender`元素都有一个成员指向等待发送消息而阻塞的进程。
 
@@ -1309,6 +1279,57 @@ struct msg_sender {//睡眠的发送者进程
 
 ![内核实现的消息队列的总体结构](img/Linux/msg-rpc-outline.png)
 
+#### 操作API
+
+```c
+int msgget(key_t key, int msgflg);//创建消息队列
+//@parameters
+//	key: 键名、关键字--用来为消息队列命名获取描述符
+//	msgflg: 消息队列的访问权限
+//@Return value
+//	成功则返回一个以key命名的消息队列描述符；失败返回-1
+
+int msgsend(int msgid, const void *msg_ptr, size_t msg_sz, int msgflg);//将消息注入消息队列
+//@parameters
+//	msgid: msgget函数返回的消息队列标识符
+//	msg_ptr: 指向待发送消息的指针，要求该消息结构是以一个长整型成员变量开始的结构体
+//	msg_sz: msg_ptr指向的消息的长度（而非结构体的长度）
+//	msgflg: 控制当前消息队列满或队列消息到达系统范围的限制时将要发生的事情
+//@Return value
+//	失败返回-1；成功返回0并将消息副本写入消息队列
+
+int msgrcv(int msgid, void *msg_ptr, size_t msg_sz, long int msgtype, int msgflg);//从消息队列获取消息
+//@parameters
+//	msgtype: 
+//		0: 获取消息队列中的第一个消息
+//		>0: 获取匹配消息类型的第一个消息
+//		<0: 获取类型等于或小于msgtype的绝对值的第一个消息
+//	msgflg: 控制当队列中没有相应类型的消息可以接收时将发生的事情
+//@Return value
+//	失败时返回-1；成功返回被复制到msg_ptr中的字节数并消除消息队列中的相应消息
+
+int msgctl(int msgid, int command, struct msgid_ds *buf);//控制消息队列
+//@parameters
+//	command: 将要采取的动作，可以取3个值
+//		IPC_STAT: 用消息队列的当前关联值覆盖msgid_ds的值
+//		IPC_SET: 把消息列队的当前关联值设置为msgid_ds结构中给出的值（需要进程有足够权限）
+//		IPC_RMID: 删除消息队列
+//	buf: 指向msgid_ds结构的指针
+//@Return value
+//	 成功时返回0；失败时返回-1
+
+struct msgid_ds{
+    uid_t shm_perm.uid;
+    uid_t shm_perm.gid;
+    mode_t shm_perm.mode;
+};
+
+struct my_message{//自定义的消息
+    long int message_type; // 必须含有此域，用来标识不同的消息类型
+    //接下来是希望传输的数据
+};
+```
+
 ### 注意事项
 
 **生命期**：消息队列的存在独立于进程，只要没有显式的删除消息队列，消息队列就**随内核一直存在**。
@@ -1329,7 +1350,130 @@ struct msg_sender {//睡眠的发送者进程
 
 此外还可以分为**二值信号量**（互斥量）和**计数信号量**。
 
-### System V实现
+### 内核信号量
+
+内核信号量试图获取资源失败时可能导致进程被挂起进入**对用户透明的等待队列**，因此**只有可以睡眠的函数才能获取内核信号量**，中断处理程序和可延迟函数都不能使用内核信号量。 
+
+#### 数据结构
+
+```c
+struct semaphore{///////////////////////////////////////
+　　 atomic_t count;//信号量的值
+　　 int sleepers;//表示是否有一些进程在信号量上睡眠
+　　 wait_queue_head_t wait;//等待队列链表的地址，链表保存了所有睡眠进程
+}
+```
+
+#### 资源操作
+
+```c
+void down(struct semaphore * sem);//申请内核信号量所保护的资源
+
+int down_interruptible(struct semaphore * sem);//申请内核信号量所保护的资源
+//@Return value
+//	如果返回0，表示获得信号量正常返回，如果被信号打断，返回-EINTR
+
+int down_trylock(struct semaphore * sem);//尝试申请内核信号量所保护的资源
+//@Return value
+//	获得信号量返回0；否则返回非0
+
+void up(struct semaphore * sem);//释放内核信号量所保护的资源
+```
+
+|                      |                             特点                             |
+| :------------------: | :----------------------------------------------------------: |
+|        `down`        | **不会被信号打断，会导致进程挂起而睡眠**，不能在中断上下文使用 |
+| `down_interruptible` |                       **能被信号打断**                       |
+|    `down_trylock`    |        **不会导致进程挂起而睡眠**，能在中断上下文使用        |
+
+### Posix 实现
+
+#### 数据结构
+
+```c
+struct semaphore {//信号量在内核中的表示
+	raw_spinlock_t lock;//自旋锁，用于count值的互斥访问
+	unsigned int count;//计数值，现有资源的数量、能同时允许访问的数量
+	struct list_head wait_list;//不能立即获取到信号量的访问者，都会加入到等待列表中
+};
+
+struct semaphore_waiter {//等待信号量的进程节点
+	struct list_head list;//用于添加到信号量的等待列表构成链表
+	struct task_struct *task;//指向等待的进程，在实际实现中，指向current
+	bool up;//用于标识是否已经释放
+};
+```
+
+#### 操作
+
+![信号量作用的一般流程](img/Linux/semphere-step.png)
+
+`schedule_timeout`指定的睡眠时间一般是无限等待只能等待被唤醒才能继续运行当前任务。
+
+##### 创建销毁
+
+**有名信号量**：**值保存在文件中**，所以它可以用于线程也可以用于进程间的同步。由于借助了文件实现所以每个`open`的位置都要`close`和`unlink`，但只有最后执行的`unlink`生效（会检查信号量的引用计数）。
+
+```c
+sem_t *sem_open(const char *name, int oflag, mode_t mode, int val);//创建有名信号量
+//@Paramters:
+//	name: 文件名（不要写路径，因为会自动放到/dev/shm目录下）
+//	oflag: 文件的打开控制，如O_CREAT或O_CREAT
+//	mode: 控制新的信号量的访问权限
+//	val: 信号量初值
+//@Return value
+//	成功返回0；失败返回-1并设置errno。
+
+int sem_close(sem_t *sem);//每个进程内标记此有名信号量已经不会再被用到
+int sem_unlink(const char *name);//删除系统中的信号量，只有没有任何进程引用该信号量时系统才会删除该有名信号量
+```
+
+**无名信号量**：值保存在内存中，**主要应用于线程**。也可以用于多进程之间的同步，此时要求无名信号量和要保护的变量必须在多个进程间共享。
+
+```c
+int sem_init(sem_t *sem, int pshared, unsigned int val);//初始化无名信号量
+//@Paramters:
+//	sem: 信号量
+//	pshared: 设置信号量共享属性(0用于线程间，非0用于进程间，1用于父子进程)，进程间共享sem必须放在共享内存区域
+//	val: 信号量初值
+//@Return value
+//	成功返回0；失败返回-1并设置errno。
+
+int sem_destroy(sem_t *sem);//销毁一个无名信号量
+```
+
+##### 一般操作
+
+```c
+int sem_trywait(sem_t *sem);//非阻塞地将信号量减一（已为0不挂起而是返回错误）
+
+int sem_wait(sem_t *sem);//阻塞地将信号量减一（已为0就挂起）
+int sem_post(sem_t *sem);//给信号量值加一
+//@Paramters:
+//	sem: 要操作的信号量
+//@Return value
+//	成功返回0；失败返回-1并设置errno。
+
+int sem_getvalue(sem_t *sem, int *sval);//取回信号量sem的当前值保存到sval中
+
+int sem_timedwait(sem_t sem, const struct timespec abs_timeout);//限时尝试对信号量加锁
+//@Paramters:
+//	sem: 信号量
+//	abs_timeout: 等待的绝对时间
+//@Return value
+//	成功返回0；失败返回-1并设置errno。
+```
+
+#### 其他接口
+
+```c
+int down_interruptible(struct semaphore *sem);//未获取信号量时，进程轻度睡眠： TASK_INTERRUPTIBLE
+int down_killable(struct semaphore *sem);//未获取到信号量时，进程中度睡眠： TASK_KILLABLE
+int down_trylock(struct semaphore *sem);//非等待的方式去获取信号量
+int down_timeout(struct semaphore *sem, long timeout);//获取信号量，并指定等待时间
+```
+
+### [System V实现](https://blog.csdn.net/Morphad/article/details/9141509)
 
 #### 数据结构
 
@@ -1339,6 +1483,7 @@ struct msg_sender {//睡眠的发送者进程
 struct sem {//System V信号量在内核的表示
 	int	semval;//信号量的当前值
 	int	sempid;//上一次操作本信号的进程PID
+	struct list_head sem_pending;//阻塞队列
 };
 ```
 
@@ -1385,43 +1530,64 @@ struct sem_queue {//信号等待队列的每个节点
 
 ```c
 struct sem_undo {
-	struct list_head	list_proc;	/* per-process list: all undos from one process. */
+	struct list_head list_proc;	/* per-process list: all undos from one process. */
 						/* rcu protected */
-	struct rcu_head		rcu;		/* rcu struct for sem_undo() */
-	struct sem_undo_list	*ulp;		/* sem_undo_list for the process */
-	struct list_head	list_id;	/* per semaphore array list: all undos for one array */
-	int			semid;		/* 信号量集标识符 */
-	short *			semadj;		/* 存放信号量集调整值的数组指针 */
+	struct rcu_head rcu;		/* rcu struct for sem_undo() */
+	struct sem_undo_list *ulp;		/* sem_undo_list for the process */
+	struct list_head list_id;	/* per semaphore array list: all undos for one array */
+	int semid;		/* 信号量集标识符 */
+	short *semadj;		/* 存放信号量集调整值的数组指针 */
 };
 ```
 
-#### 操作方法
+#### 操作
+
+##### 创建
 
 ```c
 int semget(key_t key, int num_sems, int sem_flags);//创建新信号量集或取得已有信号量集
 //@parameters
 //	key: 键名、关键字--唯一且非零，用来获取信号量集描述符
-//	num_sems: 需要的信号量数目
+//	num_sems: 
+//		>0: 创建新信号量集中信号的数目
+//		=0: 访问一个已存在的信号量集合
 //	sem_flags: 一组标志，如IPC_CREAT|0666
 //@Return value
 //	成功则返回一个以key命名信号量集描述符；失败返回-1
+```
 
+##### 操作
+
+###### 数据结构
+
+```c
 struct sembuf{
     short sem_num;//信号在信号量集中的下标索引
     short sem_op;//一次操作中对信号量加上sem_op（整数）
 //	>0: 释放sem_op个资源
-//	=0: 
-//	<0: ？？？？？？？？？？？？？阻塞不？？？？？？
-    short sem_flg;//
-//	IPC_WAIT: 
-//	IPC_NOWAIT: 
+//	<0: 申请sem_op个资源
+    short sem_flg;//操作该信号的标志
+//	IPC_WAIT: 0,操作不能执行时阻塞等待
+//	IPC_NOWAIT: 操作不能执行时立即返回
 //	SEM_UNDO: 操作系统跟踪信号，在进程没有释放该信号量而终止时由操作系统释放信号量
 };
+
+union semun{
+    int val;//setval操作将使用的值
+    struct semid_ds *buf;//IPC_STAT、IPC_SET 使用的缓存区
+    unsigned short *arry;//GETALL、SETALL 使用的数组
+	struct seminfo *__buf;//IPC_INFO(Linux特有) 使用的缓存区
+};
+```
+
+###### 操作方法
+
+```c
 int semop(int sem_id, struct sembuf *sem_opa, size_t num_sem_ops);//改变信号量的值
 //@parameters
 //	sem_id: semget返回的信号量集描述符
-//	sem_opa: 要对信号量施加的操作
-//	num_sem_ops: 要操作的信号数量
+//	sem_opa: 要对某些信号量施加的操作
+//	num_sem_ops: 要操作的信号数量，即sem_opa数组的长度
 //@Return value
 //	成功返回0；失败返回-1并设置erron
 
@@ -1430,91 +1596,27 @@ int semctl(int sem_id, int sem_num, int command, ...);//直接控制信号量集
 //	sem_id: semget返回的信号量集描述符
 //	sem_num: 要操作的信号量在信号量集中的下标
 //	command: 设置的属性
-//		IPC_GETVAL/IPC_SETVAL: 获取/设置信号量值
+//		GETALL/SETALL: 获取/设置信号量集中所有值，数据存储在semun的arry参数中
+//		GETVAL/SETVAL: 获取/设置信号量的值，数据来源于semun::val
+//		IPC_STAT/IPC_SET: 读取/设置一个信号量集的数据结构semid_ds，数据存储在semun的buf参数中。
 //		IPC_RMID: 删除信号量
-//		IPC_STAT: 
+//		GETPID: 返回最后一个执行semop操作的进程的PID。
+//	...: semun类型的可选参数
 //@Return value
 //	若成功不同cmd返回不同的值，IPC_GETVAL返回信号量当前值其他返回0；出错返回-1
-union semun{//第四参数
-    int val;//使用的值
-    struct semid_ds *buf;//IPC_STAT、IPC_SET 使用的缓存区
-    unsigned short *arry;//GETALL、SETALL 使用的数组
-	struct seminfo *__buf;//IPC_INFO(Linux特有) 使用的缓存区
-};
-```
-
-### Posix 实现
-
-```c
-struct semaphore {//信号量在内核中的表示
-	raw_spinlock_t lock;//自旋锁，用于count值的互斥访问
-	unsigned int count;//计数值，现有资源的数量、能同时允许访问的数量
-	struct list_head wait_list;//不能立即获取到信号量的访问者，都会加入到等待列表中
-};
-
-struct semaphore_waiter {//等待信号量的进程节点
-	struct list_head list;//用于添加到信号量的等待列表构成链表
-	struct task_struct *task;//指向等待的进程，在实际实现中，指向current
-	bool up;//用于标识是否已经释放
-};
-```
-
-![信号量作用的一般流程](img/Linux/semphere-step.png)
-
-`schedule_timeout`指定的睡眠时间一般是无限等待只能等待被唤醒才能继续运行当前任务。
-
-#### 有名信号量
-
-主要应用于线程，每个open的位置都要close和unlink，但只有最后执行的unlink生效
-
-```c
-sem_t *sem_open(const char *name, int oflag, mode_t mode, int val);
-int sem_close(sem_t *sem);
-int sem_unlink(const char *name);
-```
-
-#### 无名信号量
-
-主要应用于线程。
-
-```c
-#include<semaphore.h>
-int sem_init(sem_t *sem, int pshared, unsigned int val);//初始化信号量
-int sem_wait(sem_t *sem);//阻塞将信号量减一
-int sem_trywait(sem_t *sem);//非阻塞将信号量减一
-int sem_post(sem_t *sem);//给信号量值加一
-int sem_destroy(sem_t *sem);//销毁一个信号量
-//@Paramters:
-//	sem: 信号量
-//	pshared: 设置信号量共享属性(0用于线程间，非0用于进程间，1用于父子进程)，进程间共享sem必须放在共享内存区域
-//	val: 信号量初值
-//@Return value
-//	成功返回0；失败返回-1并设置errno。
-
-int sem_timedwait(sem_t sem, const struct timespec abs_timeout);//限时尝试对信号量加锁
-//@Paramters:
-//	sem: 信号量
-//	abs_timeout: 等待的绝对时间
-//@Return value
-//	成功返回0；失败返回-1并设置errno。
-```
-
-#### 其他接口
-
-```c
-/* 未获取信号量时，进程轻度睡眠： TASK_INTERRUPTIBLE */
-int down_interruptible(struct semaphore *sem)
-/* 未获取到信号量时，进程中度睡眠： TASK_KILLABLE */
-int down_killable(struct semaphore *sem)
-/* 非等待的方式去获取信号量 */
-int down_trylock(struct semaphore *sem)
-/* 获取信号量，并指定等待时间 */
-int down_timeout(struct semaphore *sem, long timeout)
 ```
 
 ### [读写信号量](https://www.cnblogs.com/LoyenWang/p/12907230.html)
 
-共享读互斥写，临界区只允许一个写进程进入。以下是简化的数据结构，其中最为重要的是**`count`字段**，它同时记录了读者和写者的信息，在32b的count中，高16位代表了waiting part，低15位代表了active part。
+共享读互斥写，临界区只允许一个写进程进入，适于**读多写少**的场景。读写信号量有两种实现，一种是通用的不依赖于硬件架构；另一种是架构相关的（高性能）。
+
+#### 数据结构
+
+以下是简化的数据结构，其中最为重要的是**`count`字段**，它同时记录了读者和写者的信息，在32b的count中，高16位代表了`waiting part`，低15位代表了`active part`。
+
+**`waiting part`**：
+
+**`active part`**：
 
 ```c
 struct rw_semaphore {
@@ -1534,51 +1636,79 @@ struct rw_semaphore {
 | `RWSEM_ACTIVE_WRITE_BIAS` | -65535 | `0xFFFF0001` |   **写者**申请释放时对count的操作单位   |
 |   `RWSEM_WAITING_BIAS`    | -65536 | `0xFFFF0000` | 添加删除**等待队列**时对count的操作单位 |
 
-> 在获取释放读锁和写锁的全过程中，`count`值伴随着上述这几个宏定义的加减操作，用于标识不同的状态，可以罗列如下：
+在获取释放读锁和写锁的全过程中，`count`值伴随着上述这几个宏定义的加减操作，用于标识不同的状态，可以罗列如下：
 
-- `0x0000000X`：活跃的读者和正在申请读锁的读者总共为`X`个，没有写者来干扰；
+|                              值                              |                             状态                             |
+| :----------------------------------------------------------: | :----------------------------------------------------------: |
+|                         `0x00000000`                         |                      初态：无读者和写者                      |
+|                         `0x0000000X`                         |  活跃的读者和正在申请读锁的读者总共为`X`个，没有写者来干扰   |
+| `0xFFFF000X = RWSEM_WAITING_BIAS + X * RWSEM_ACTIVE_READ_BIAS` | 表示活跃的读者和正在申请读锁的读者总共有`X`个，并且还有一个写者在睡眠等待； |
+| `0xFFFF000X = RWSEM_ACTIVE_WRITE_BIAS + (X - 1)* RWSEM_ACTIVE_READ_BIAS` | 表示有一个写者在尝试获取锁，活跃的读者和正在申请读锁的读者总共有`X-1`个； |
+|            `0xFFFF0001 = RWSEM_ACTIVE_WRITE_BIAS`            |   有一个活跃的写者，或者写者正在尝试获取锁，没有读者干扰；   |
+|  `0xFFFF0001 = RWSEM_ACTIVE_READ_BIAS + RWSEM_WAITING_BIAS`  |    有个写者正在睡眠等待，还有一个活跃或尝试获取锁的读者；    |
 
-- `0x00000000`：没有读者和写者来操作，初始化状态；
+#### 初始化
 
-- ```
-  0xFFFF000X
-  ```
+```c
+DECLARE_RWSEM(name)//声明一个读写信号量name并对其进行初始化
+void init_rwsem(struct rw_semaphore *sem);//对读写信号量sem进行初始化
+```
 
-  ：分为以下几种情况：
-
-  1. `0xFFFF000X = RWSEM_WAITING_BIAS + X * RWSEM_ACTIVE_READ_BIAS`，表示活跃的读者和正在申请读锁的读者总共有`X`个，并且还有一个写者在睡眠等待；
-  2. `0xFFFF000X = RWSEM_ACTIVE_WRITE_BIAS + (X - 1)* RWSEM_ACTIVE_READ_BIAS`，表示有一个写者在尝试获取锁，活跃的读者和正在申请读锁的读者总共有`X-1`个；
-
-- ```
-  0xFFFF0001
-  ```
-
-  ：分为以下几种情况：
-
-  1. `0xFFFF0001 = RWSEM_ACTIVE_WRITE_BIAS`，有一个活跃的写者，或者写者正在尝试获取锁，没有读者干扰；
-  2. `0xFFFF0001 = RWSEM_ACTIVE_READ_BIAS + RWSEM_WAITING_BIAS`，有个写者正在睡眠等待，还有一个活跃或尝试获取锁的读者；
-
-#### 读信号量
-
-
+#### 获取锁
 
 ##### 读者获取锁
 
+```c
+void down_read(struct rw_semaphore *sem);//会导致调用者睡眠，因此只能在进程上下文使用。
+int down_read_trylock(struct rw_semaphore *sem);//不会导致调用者睡眠
+//@Return value
+//	获得读写信号量返回1；否则返回0
+```
+
 ![读者获取锁](img/Linux/reader-P.png)
 
-##### 读者释放锁
-
-![读者释放锁](img/Linux/reader-V.png)
-
-#### 写信号量
+读者获取锁的时候，如果没有写者持有，那就可以支持多个读者直接获取；而如果此时写者持有了锁，读者获取失败，它将把自己添加到等待列表中（这个**等待列表中可能已经存放了其他来获取锁的读者或者写者**），在将读者真正睡眠等待前，还会**再一次判断**此时是否有写者释放了该锁，释放了的话，那就需要对睡眠等待在该锁的任务进行唤醒操作了。
 
 ##### 写者获取锁
 
+```c
+void down_write(struct rw_semaphore *sem);//会导致调用者睡眠，因此只能在进程上下文使用。
+int down_write_trylock(struct rw_semaphore *sem);////不会导致调用者睡眠
+//@Return value
+//	获得读写信号量返回1；否则返回0
+```
+
 ![写者获取锁](img/Linux/writeer-P.png)
+
+写者获取锁时，只要锁被其他读者或者写者持有了，则获取锁失败，然后进行失败情况处理。在失败情况下，它本身会**先尝试进行optimistic  spin**去尝试获取锁，如果获取失败**后进入慢速路径**。慢速路径中去判断等待列表中是否有任务在睡眠等待，并且会再次尝试去查看是否已经有写者释放了锁，写者释放了锁，并且只有读者在睡眠等待，那么此时应该优先让这些先等待的任务唤醒。
+
+#### 释放锁
+
+唤醒操作中，**优先处理自旋未休眠的任务**，没有自旋任务才去唤醒等待列表中的任务；唤醒等待列表中的任务时，由于等待列表中可能存放的是读者与写者的组合，需要分情况处理：如果第一个任务是写者，则直接唤醒该写者，否则将唤醒排在前边的**连续**几个读者；
+
+##### 读者释放锁
+
+```c
+void up_read(struct rw_semaphore *sem);
+```
+
+![读者释放锁](img/Linux/reader-V.png)
 
 ##### 写者释放锁
 
+```c
+void up_write(struct rw_semaphore *sem);
+```
+
 ![写者释放锁](img/Linux/writeer-V.png)
+
+####  身份转换
+
+在写者保持读写信号量而不需要写期间，将写者降级为读者使等待访问的读者能够立刻访问，从而增加并发性提高效率。 
+
+```c
+void downgrade_write(struct rw_semaphore *sem);
+```
 
 ### `Semaphore`与`Mutex`
 
@@ -1589,6 +1719,8 @@ struct rw_semaphore {
 1. 在保护临界区的时候，无法进行优先级反转的处理；
 2. 系统无法对其进行跟踪断言处理，比如死锁检测等；
 3. 信号量的调试变得更加麻烦；
+
+当对低开销、短期、中断上下文加锁，优先考虑自旋锁；当对长期、持有锁需要休眠的任务，优先考虑信号量。
 
 ### NOTE
 
@@ -1610,92 +1742,181 @@ struct rw_semaphore {
 |  信号量  |      信号量无法在内核空间和用户空间之间使用。      |
 |  套接字  |    套接字在硬、软中断中不可以无阻塞地接收数据。    |
 
-|   方式   |        数据量        |      进程关系      |  消息格式  |    模式    | 同步 | 生命期 | K/U拷贝 |    补充    |
-| :------: | :------------------: | :----------------: | :--------: | :--------: | :--: | :----: | :-----: | :--------: |
-|   信号   |      预定义事件      |      任何进程      |    整形    |   半双工   |      |        |         | 唯一的异步 |
-|  信号量  |                      |                    |            |            |      |        |         |            |
-| 匿名管道 |     循环使用一页     |      亲缘进程      |   字节流   |   半双工   |  Y   | 随进程 |         |            |
-| 命名管道 |     循环使用一页     |      任何进程      |   字节流   |   半双工   |  Y   |        |         |            |
-| 共享内存 |        自定义        |      任何进程      |   字节流   | 无同步支持 |  N   |        | 无拷贝  |            |
-| 消息队列 | 消息和消息数量有上限 |      任何进程      | 自定义消息 |            |      |        | 虚拷贝  |            |
-|  套结字  |                      | 可跨主机的任何进程 |            |            |      |        |         |            |
+|   方式   |        数据量        |      进程关系      |  消息格式  |    模式    | 同步 | 生命期 | K/U拷贝 | 模态转换 |    补充    |
+| :------: | :------------------: | :----------------: | :--------: | :--------: | :--: | :----: | :-----: | :--------: | :--------: |
+|   信号   |      预定义事件      |      任何进程      |    整形    |   半双工   |      | 随进程 | 无所谓 |         | 唯一的异步 |
+| 匿名管道 |     循环使用一页     |      亲缘进程      |   字节流   |   半双工   |  Y   | 随进程 |         |         |            |
+| 命名管道 |     循环使用一页     |      任何进程      |   字节流   |   半双工   |  Y   |              随进程              |         |         |            |
+|  套结字  |                      | 可跨主机的任何进程 |            |            |      | **随进程** |         | 看实现 |            |
+| P共享内存 |        自定义        |      任何进程      |   字节流   | 无同步支持 |  N   | 随内核或文件（内存映射文件实现） | 无拷贝  | 不需要 |            |
+| P消息队列 | 消息和消息数量有上限 |      任何进程      | 自定义消息 |            |      | 随内核或文件（内存映射文件实现） |  需要   |     |            |
+|  P信号量  | 单信号量 | 任何进程 | 预定义 |            | Y | 随内核或文件（内存映射文件实现） | 无所谓 | 竞争时需要 | 基于`futex` |
+| SV共享内存 |        自定义        |      任何进程      |   字节流   | 无同步支持 |  N   | 随内核 | 无拷贝  |   |            |
+| SV消息队列 | 消息和消息数量有上限 |      任何进程      | 自定义消息 |            |      | 随内核 | 需要 |  |            |
+|  SV信号量  | 信号量集 | 任何进程 | 预定义 |            | Y | 随内核 | 无所谓 | 需要 | 支持`UNDO` |
+
+**`futex`  快速用户空间互斥锁**：对传统的System V同步方式的一种替代，仅在有竞争的操作时才用系统调用访问内 核，在竞争较少的情况下可以大幅度地减少工作负载 。
 
 ### SystemV & Posix
 
-POSIX sem 实现是基于futex的。 在无竞争条件下，不需要陷入内核，执行系统调用，其实现是非常轻量级的。
-System V sem 则不同，无论有无竞争都要执行系统调用，因此性能落了下风。 POSIX sem 由于没有事事烦扰内核，所以内核也无法帮他记录 sem_adj ，即POSIX sem 并没有UNDO功能。
+Linux内核为系统System VIPC提供了一个统一的系统调用`ipc()`：
 
-|          |        接口        |    对象命名    |    模态转换    | UNDO |        移植性        |   额外库    |
-| :------: | :----------------: | :------------: | :------------: | :--: | :------------------: | :---------: |
-|  POSIX   | 简单，命名有下划线 | 使用名字`name` | 有竞争才进内核 |      | 几乎所有的*nix都支持 | rt、pthread |
-| system V |   复杂，性能较低   | 使用键`key_t`  |   始终进内核   |      |   有一些unix不支持   |   不需要    |
+   ```c
+int ipc(unsigned int call,int firtst,int second,int third,void*ptr,int firth);
+//@parameters
+//	call: 具体的操作码，可以取以下宏
+//		信号量[1-4]：SEMOP、SEMGET、SEMCTL、SEMTIMEDOP
+//		消息队列[11-14]：MSGSND、MSGRCV、MSGGET、MSGCTL
+//		共享内存[21-24]：SHMAT、SHMDT、SHMGET、SHMCTL
+   ```
 
-标识符重用System V IPC  标识符是系统范围的，不是特定于进程的。？？？？？？？？？？？？？
+|          |        接口        |   本体   |    对象命名    |        移植性        |    标识符    |   内核实现   |    头文件     |    额外库    |
+| :------: | :----------------: | :------: | :------------: | :------------------: | :----------: | :----------: | :-----------: | :----------: |
+|  POSIX   | 简单，命名有下划线 | 非负整数 | 使用名字`name` |   有一些unix不支持   |  特定于进程  | 基于文件系统 | `semaphore.h` | `rt,pthread` |
+| system V |   复杂，性能较低   | 信号量集 | 使用键`key_t`  | 几乎所有的*nix都支持 | 系统全局范围 | 统一数据结构 |  `sys/sem.h`  |    不需要    |
 
+| System V IPC |    头文件     | 创建方法 | 控制函数 |     操作函数     |
+| :----------: | :-----------: | :------: | :------: | :--------------: |
+|   消息队列   | `<sys/msg.h>` | `msgget` | `msgctl` | `msgsnd、msgrcv` |
+|    信号量    | `<sys/sem.h>` | `semget` | `semctl` |     `semop`      |
+|  共享内存区  | `<sys/shm.h>` | `shmget` | `shmctl` |  `shmat、shmdt`  |
 
+| Posix IPC  |     头文件      |                     创建销毁方法                     |        控制函数         |                   操作函数                   |
+| :--------: | :-------------: | :--------------------------------------------------: | :---------------------: | :------------------------------------------: |
+|  消息队列  |  `<mqueue.h>`   |             `mq_open/mq_close/mq_unlink`             | `mq_getattr/mq_setattr` |        `mq_receive/mq_send/mq_notify`        |
+|   信号量   | `<semaphore.h>` | `sem_open/sem_close/sem_unlink/sem_init/sem_destroy` |           无            | `sem_wait/sem_trywait/sem_post/sem_getvalue` |
+| 共享内存区 | `<sys/mman.h>`  |                `shm_open/shm_unlink`                 |    `ftruncate/fstat`    |                `mmap/munmap`                 |
+
+Posix IPC对象打开函数第二参数的有效性总结
+|    方法    | `O_RDONLY` | `O_WRONLY` | `O_RDWR` | `O_CREAT` | `O_EXCL` | `O_NONBLOCK` | `O_TRUNC` |
+| :--------: | :--------: | :--------: | :------: | :-------: | :------: | :----------: | :-------: |
+| `mq_open`  |    支持    |    支持    |   支持   |   支持    |   支持   |     支持     | **无效**  |
+| `sem_open` |  **无效**  |  **无效**  | **无效** |   支持    |   支持   |   **无效**   | **无效**  |
+| `shm_open` |    支持    |  **无效**  |   支持   |   支持    |   支持   |   **无效**   |   支持    |
 
 #### [SystemV的IPC管理](https://ty-chen.github.io/linux-kernel-shm-semaphore/)
 
+##### 整体组织
+
 内核为SystemV的IPC提供了统一的封装和管理机制`struct ipc_ids`，`ipc_ids[3]`中分别代表信号量、消息队列和共享内存。并通过`ipc_namespace`来分割不同的IPC环境。
+
+```c
+                                                        [0] struct kern_ipc_perm <==> struct shmid_kernel
+struct ipc_namespace => struct ipc_ids => struct idr => [1] struct kern_ipc_perm <==> struct shmid_kernel
+                                                        [2] struct kern_ipc_perm <==> struct shmid_kernel
+```
 
 ![System V下的进程通信管理组织](img/Linux/systemv-ipc-arch.png)
 
 ##### 数据结构
 
+同步机制以数据结构操作为中心，为了提供同步操作IPC对象的效率，Linux内核针对不同大小的数据结构操作使用了自旋锁、读/写信号量、RCU、删除标识和引用计数等机制。
+
+|                             机制                             |                  适用类型                  |      实例       |
+| :----------------------------------------------------------: | :----------------------------------------: | :-------------: |
+|                            自旋锁                            |     占用内存少、操作快速的小型数据结构     | `kern_ipc_perm` |
+|                         读/写信号量                          |    读操作明显多于写操作的中小型数据结构    |    `ipc_ids`    |
+| [RCU](http://www.wowotech.net/kernel_synchronization/rcu_fundamentals.html)/ [Read-Copy-Update](https://zhuanlan.zhihu.com/p/30583695) | 含有队列或链表、操作时间较长的大型数据结构 |   `sem_array`   |
+|                      删除标识和引用计数                      |              协调各种同步机制              |                 |
+
+**RCU**：内核实现的一种针对**读多写少**的共享数据的同步机制，随意读，但更新数据的时候，需要先复制一份副本，在副本上完成修改，再一次性地替换旧数据。
+
+**`radix`基数树**：实现对于长整型数据类型的路由，**利用radix树可以实现IDR（ID Radix）机制**（将对象的   **身份鉴别号整数值ID与对象指针建立关联表**根据一个长整型（比如一个长ID）快速查找到其对应的对象指针）。
+
+![基数树](img/Linux/radix-tree.png)
+
+###### 统一管理
+
 ```c
-struct ipc_namespace {//用来隔离不同的IPC环境
-	atomic_t	count;//被引用的次数
+#define sem_ids(ns) ((ns)->ids[IPC_SEM_IDS])
+#define msg_ids(ns) ((ns)->ids[IPC_MSG_IDS])
+#define shm_ids(ns) ((ns)->ids[IPC_SHM_IDS])
+struct ipc_namespace {//用来隔离不同的IPC环境，非完整定义
+	atomic_t count;//被引用的次数
 	struct ipc_ids	ids[3];//每个数组元素对应一种 IPC 机制：信号量、消息队列、共享内存
  //       #define IPC_SEM_IDS 0   信号量
  //       #define IPC_MSG_IDS 1   消息队列
  //       #define IPC_SHM_IDS 2   共享内存
     // 信号量、消息、共享内存、消息队列的管理结构
-	// 完整定义见https://www.ffutop.com/posts/2019-05-27-understand-kernel-11/
 };
-
-#define sem_ids(ns) ((ns)->ids[IPC_SEM_IDS])
-#define msg_ids(ns) ((ns)->ids[IPC_MSG_IDS])
-#define shm_ids(ns) ((ns)->ids[IPC_SHM_IDS])
 
 struct ipc_ids {// 内核的全局数据结构用来管理IPC对象
 	int in_use;//使用中的 IPC 对象数量
-	unsigned short seq;//下一个可分配的位置序列号
-	unsigned short seq_max;//能够使用的序列最大位置
-	struct semaphore sem;//保护ipc_ids的信号量
-	struct ipc_id_ary nullentry;//如果IPC资源无法初始化，则entries字段指向伪数据结构
-	struct ipc_id_ary* entries;//指向资源ipc_id_ary数据结构的指针
-}sem_ids, msg_ids, shm_ids; //内核中的实例化对象
+	unsigned short seq;//下一个可分配的位置序列号，每次分配后自增1
+	unsigned short seq_max;//能够使用的序列最大位置，seq达到seq_max后从0重新开始
+	struct rw_semaphore rw_mutex;//保护ipc_ids的读写锁
+	struct idr ipcs_idr;//基数树：通过IDR机制将ID与结构kern_ipc_perm类型指针建立关联，真正管理数据
+//	当对象较少时采用链表的方式组织每一类的IPC对象，较多时使用基数树来加快查找
+//	struct ipc_id_ary* entries;//指向资源ipc_id_ary数据结构的指针，记录了该类IPC对象的所有条目
+}sem_ids, msg_ids, shm_ids; //内核中的实例化对象，分别用来管理信号量、消息队列、共享内存
 
 struct ipc_id_ary {
- int size;//保存的是数组的长度值
- struct kern_ipc_perm *p[0];//数组长动态变化的指针数组，内核初始值为128
-};
-
-struct kern_ipc_perm{//内核数据结构：内核为每个IPC对象维护一个此数据结构，用于记录一个IPC对象的权限信息
-	key_t key;//键值
-	uid_t uid, cuid;
-	gid_t gid, cgid;
-	mode_t mode; 
-	unsigned long	seq;
+	int size;//保存的是数组的长度值
+	struct kern_ipc_perm *p[0];//数组长动态变化的指针数组，内核初始值为128
 };
 
 struct ipc_perm {};//用户数据结构：包含了IPC对象的基本信息，内容同kern_ipc_perm
-
-struct sem_array {
-   struct kern_ipc_perm sem_perm; /* permissions .. see ipc.h */
-   time_t   sem_otime; /* last semop time */
-   time_t   sem_ctime; /* last change time */
-   struct sem  *sem_base; /* ptr to first semaphore in array */指向信号量队列
-   struct sem_queue *sem_pending; /* pending operations to be processed */指向挂起队列的首部
-   struct sem_queue **sem_pending_last; /* last pending operation */指向挂起队列的尾部
-   struct sem_undo  *undo;  /* undo requests on this array */信号量集上的 取消请求
-   unsigned long  sem_nsems; /* no. of semaphores in array */信号量集中的信号量的个数
+struct kern_ipc_perm{//内核数据结构：内核为每个IPC对象维护一个此数据结构，用于记录一个IPC对象的权限信息
+	spinlock_t lock;
+	int deleted;//删除标识，表示该结构对象已删除
+	int id;//每个IPC对象的id识别号（由基数树中空闲id与seq计算得到），便于从基数树中获取该对象的指针
+	key_t key;//键值
+	uid_t uid, cuid;//对象所有者、创建者的UID
+	gid_t gid, cgid;//对象所有者所属组、创建者所属组的GID
+	mode_t mode;//创建者、创建者群组和其他人的读和写许可
+	unsigned long seq;//在每个IPC对象类型中的序列号
 };
 ```
 
-######  **`System V: key_t`**
+###### 三种机制的组织
+
+信号量、消息队列和共享内存三种IPC对象的数据结构中都有一个`struct kern_ipc_perm sem_perm`，在实际使用传递IPC对象的过程中传递的是**`struct kern_ipc_perm`的指针**，对这个指针使用**宏`container_of`**可以达到外层的`struct X`即实际的IPC对象。
+
+```c
+#define container_of(ptr, type, member) ({			\
+	const typeof( ((type *)0)->member ) *__mptr = (ptr);	\
+	(type *)( (char *)__mptr - offsetof(type,member) );})
+```
+
+```c
+struct msg_queue {//每个消息队列的头，包括了该队列的基本信息
+	struct kern_ipc_perm q_perm;
+	time_t q_stime, q_rtime, q_rtime;//上一次send、receive、change的时间点
+	pid_t q_lspid, q_lrpid;//上一次send、receive消息的进程号
+	unsigned long q_cbytes;//消息队列中的消息总大小（Byte）
+	unsigned long q_qnum;//消息队列中的消息数量
+	unsigned long q_qbytes;//消息队列能容纳的最大消息总大小（Byte）
+	struct list_head q_messages;//指向待读取的消息链表，链表元素为msg_msg
+	struct list_head q_receivers;//指向sleeping的接收者链表，链表元素为msg_sender
+	struct list_head q_senders;//向sleeping的发送者链表，链表元素为msg_sender
+};
+
+struct sem_array {
+   struct kern_ipc_perm sem_perm; 
+   time_t sem_otime, sem_ctime;//上一次semop、change的时间点
+   struct sem  *sem_base;//指向信号量队列
+   struct sem_queue *sem_pending;//指向挂起队列的首部
+   struct sem_queue **sem_pending_last;//指向挂起队列的尾部
+   struct sem_undo  *undo;//信号量集上的undo请求个数
+   unsigned long  sem_nsems;//信号量集中的信号量的个数
+};
+
+struct shmid_kernel{//每一个共享内存区的控制结构，实现存储管理和文件系统的结合
+	struct kern_ipc_perm shm_perm;
+    time_t shm_atim, shm_dtim, shm_ctim;//上一次shat、shdt、change的时间点
+	pid_t shm_cprid, shm_lprid;//该共享内存的创建者和上次使用者
+	struct file *shm_file;//将被映射文件的文件描述符
+	int id;
+	unsigned long shm_nattch;//连接到这块共享内存的进程数
+	unsigned long shm_segsz;//该共享内存大小，字节为单位
+};
+```
+
+#####  **`System V: key_t`**
 
 System V风格的IPC都使用**key_t值（IPC键）**作为它们的IPC描述符名字，**`key_t`和IPC对象描述符的关系类似于文件名和文件描述符的关系**。头文件通常把`key_t`定义为一个少32位的正整数，其值的产生有三种方式：使用**`ftok()`**产生；指定为**`IPC_PRIVATE`**由内核负责产生一个系统唯一的值；随机选一个整数由多个进程共享。
+
+**note**：使用`tfok()`产生的`key_t`在文件的`inode`变化后（删后重建），即使是同名文件最后的生成结果也不一样。
 
 ```c
 key_t ftok(const char *pathname, int id);
@@ -1705,6 +1926,8 @@ key_t ftok(const char *pathname, int id);
 //@Return value
 //	成功返回IPC键（inode低16b+dev低8位+id低8b）;出错返回-1
 ```
+
+## 相关场景
 
 ### 生产者消费者模型
 
@@ -1939,3 +2162,9 @@ Linux通过将每个段的起始地址赋予一个随机偏移量**`random offse
 # 其他补充
 
 [Linux内核中的锁](https://www.cnblogs.com/LoyenWang/p/12632532.html)
+
+[内核源码在线看](https://elixir.bootlin.com/linux/latest/source)
+
+[glibc源码在线看](https://elixir.bootlin.com/glibc/latest/source)
+
+[Linux SystemV ipc 实现](https://blog.csdn.net/lcw_202/article/details/6076362#t12)：排版乱
