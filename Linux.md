@@ -96,13 +96,13 @@ Linux将所有的执行实体都称之为任务Task（Task是进程概念在Linu
 
 32bit Linux采用了3级页表$[PGD(16b)|PMD(4b)|PTE(4b)|Offset(12b)]$。64bit采用了4级页表$[PG_{lobal}D|PU_{pper}D|PM_{iddle}D|PTE|Offset]$。
 
+![四级页表](img/Linux/four-layer-pte.png)
+
 ## 抢占内核
 
 在Linux 2.6以前，内核只支持用户态抢占，内核态代码会一直运行直到代码被完成或者被阻塞(系统调用可以被阻塞)。Linux从2.6开始支持可抢占式内核，kernel可以在任何时间点（因为中断造成的抢占可以发生在任何时间）上抢占一个任务（要求此时间点的内核代码不持有锁处于临界区且内核代码[可重入](https://www.wikiwand.com/zh-hans/%E5%8F%AF%E9%87%8D%E5%85%A5)），从中断处理例程返回到内核态时，kernel会检查是否可以抢占和是否需要重新调度。[参考1](https://github.com/IMCG/-/blob/master/kernel/Linux%E5%86%85%E6%A0%B8%E6%80%81%E6%8A%A2%E5%8D%A0%E6%9C%BA%E5%88%B6%E5%88%86%E6%9E%90.md)
 
 ## CFS调度算法
-
-
 
 # [I](https://zhuanlan.zhihu.com/p/308054212) [O](https://zhuanlan.zhihu.com/p/83398714)
 
@@ -2170,6 +2170,153 @@ Linux通过将每个段的起始地址赋予一个随机偏移量**`random offse
 
 ![Linux进程内存管理](img/Linux/vm_area_struct.png)
 
+# [交换空间](https://blog.csdn.net/qkhhyga2016/article/details/88722458)
+
+![Linux swap子系统](img/Linux/swap2zramorfile.png)
+
+## 过程概述
+
+Linux会在内存充裕时将空闲内存用于缓存磁盘数据以提高I/O性能，在内存紧张时（空闲页面小于 `WMARK_LOW` 时）会由**内核线程`kswapd`**负责将脏页回写到磁盘中（`swap`）以回收内存。在进程的地址空间中存在**具名页和匿名页两种内存页**，对于和文件系统中的文件绑定的具名页可以直接将脏页写回到磁盘上对应的文件上。而对于如`heap、stack`这样没有后备文件的匿名页，在开启`swap`支持后会**将`swap`分区作为匿名页的后备文件**进行内存回收。
+
+![swap](img/Linux/swap-layer.png)
+
+![swap文件与swap文件系统](img/Linux/swap-type.webp)
+
+## 内核支持
+
+交换空间既可以使用普通文件系统上的交换文件也可以使用磁盘交换分区，内核支持最大`MAX_SWAPFILES`个交换区，所有的交换区都在`struct swap_info_struct swap_info[MAX_SWAPFILES]`全局数组中，每个**交换区[`swap_info_struct`](http://elixir.free-electrons.com/linux/v2.6.11/source/include/linux/swap.h#L121)**都由一个（交换分区）或者多个（交换文件：因为文件系统有可能没把该文件全部分配在磁盘的一组连续块中）由`swap_extent`描述符表示的**交换子区**(swap extent)组成，每个子区对应一组**页槽**（在**磁盘上物理相邻**：可以减少在访问交换区时磁盘的寻道时间）。
+
+### 交换区
+
+#### 组织结构
+
+**页槽**：内核将每一个交换区中的空间按照页大小划分作为**基本管理单位**，每一个**页大小**的空间称为一个页槽。每个交换区的第0页槽存贮该交换区的信息不参与交换，有缺陷不可用的槽也会被标记。
+
+![swap与页槽](img/Linux/swap-slot.png)
+
+#### `swap_info_struct`
+
+```c
+struct swap_info_struct {//描述每一个交换区
+	unsigned int flags;//交换区标志
+	signed char	type;//交换区的名字，用于在全局变量swap_info[]中索引到本结构体
+	spinlock_t sdev_lock;//保护交换区的自旋锁
+	struct block_device *bdev;//存放交换区的块设备描述符
+	int prio;// 交换区优先级
+	unsigned long max;//交换区的大小，以页为单位
+	int next;// 指向下一个交换区描述符的指针
+
+	int nr_extents;//组成交换区的子区数量
+    struct swap_extent first_swap_extent;;//组成交换区的子区链表的头部，链表已被rbtree所取代
+	struct swap_extent *curr_swap_extent;//上一次访问的swap_extent，每次访问后更新
+
+	int pages;//实际可用页槽的个数
+	unsigned int lowest_bit;//可用页槽起始位置
+	unsigned int highest_bit;//可用页槽结束位置
+	unsigned long inuse_pages;//交换区内已用页槽数
+	unsigned short * swap_map;//指向计数器数组的指针，交换区的每个页槽对应一个数组元素
+
+    struct file *swap_file;//指向swap分区的struct file结构体
+
+	unsigned old_block_size;
+    struct swap_cluster_list free_clusters;//优化SSD：主要为了损耗均衡而非速度
+	unsigned int cluster_next;//优化SSD下性能的新增字段
+	unsigned int cluster_nr;//优化SSD下性能的新增字段
+};
+
+struct swap_cluster_info {//每个CPU核心上一个，主要为优化SSD
+    spinlock_t lock;	
+    unsigned int data:24;
+    unsigned int flags:8;
+};
+```
+
+**`swap_map`**：指向一个**长为交换区`slot`数量**的页槽计数器数组，数组中每一个元素对应一个页槽，记录了该页槽被多少个进程共享换出。特殊值0代表页槽空闲、`SWAP_MAP_BAD`代表槽有缺陷不可用。
+
+[**SSD优化**](https://link.zhihu.com/?target=http%3A//tinylab.org/lwn-704478/)：[来源](https://zhuanlan.zhihu.com/p/70964551)
+
+#### `swp_entry_t`
+
+该结构中的每个位有其含义，该值在换出时会被填充如进程对应的页表项中：
+
+```c
+typedef struct{//换出页标识符，用于标识索引每一个页槽
+    unsigned long val;
+}swp_entry_t;
+```
+
+| 比特位 |        0         |     1-7      |   8    | 9-最高位 |
+| :----: | :--------------: | :----------: | :----: | :------: |
+|  含义  | 代表页是否在内存 | 区域编号type | 保留位 | slot编号 |
+
+#### `swap_extent`
+
+内存层面的最小管理单元为一个`slot:4K`，而磁盘层面的最小寻址单元为一个`sector:512B`，每个`slot`对应磁盘上一个`block`，每个`block`包含8个`sector`（供`block io`层使用）。由于**`swapfile`**在磁盘上的物理分布不一定连续，`slot`索引和磁盘`block`编号的映射关系需要借助专门的结构体`swap_extent`来描述，它将一个`swapfile`一定范围内的的`slots`映射到一定范围内的磁盘`blocks`。
+
+```c
+struct swap_extent {//用于为swapfile的slot和磁盘地址建立映射
+    struct list_head list;//用来构成双向链表
+	pgoff_t nr_pages;//映射的数目
+    pgoff_t start_page;//描述的第一个存储块编号，对应slot
+    sector_t start_block;//描述该第一个存储块对应的扇区编号，对应sector
+};
+```
+
+![swapfile的组织](img/Linux/swap-extern.jpg)
+
+## 交换
+
+### swap cache
+
+一个`pages`管理结构的临时区域（不直接包含`page`），存储着正在被换入或换出的匿名页描述符，其[作用](http://liujunming.top/2017/10/08/Linux-swapping%E6%9C%BA%E5%88%B6%E8%AF%A6%E8%A7%A3/)主要发挥在多进程共享页的换入和一个进程试图换入一个正在被换出的页面时。当换入或换出结束时（对于共享匿名页，换入换出操作必须对共享该页的所有进程进行），匿名页描述符才可以从`swap cache`删除。
+
+![swap cahe的作用](img/Linux/swap-cache-func.png)
+
+### 进程页管理
+
+Linux 操作系统采用最近最少使用（LRU）算法置换内存中的页面，系统中物理内存的每个区都会在内存中持有 **`active_list` 和 `inactive_list`** 两种链表，其中前者包含活跃的内存页，后者中存储的内存页都是**回收的候选**页面，除此之外，Linux 还会再将 [`lru_list`](https://elixir.bootlin.com/linux/v5.9.6/source/include/linux/mmzone.h#L246) 中的内存页根据页的特性分成如下几种：
+
+```c
+enum lru_list {
+	LRU_INACTIVE_ANON = LRU_BASE,//不活跃匿名页
+	LRU_ACTIVE_ANON = LRU_BASE + LRU_ACTIVE,//活跃匿名页
+	LRU_INACTIVE_FILE = LRU_BASE + LRU_FILE,//不活跃具名页
+	LRU_ACTIVE_FILE = LRU_BASE + LRU_FILE + LRU_ACTIVE,//活跃具名页
+	LRU_UNEVICTABLE,//禁止回收的内存页
+	NR_LRU_LISTS
+};
+```
+
+![内存页链表](img/Linux/linux-active-and-inactive-list.png)
+
+每当内存页被访问时，Linux 都会将被访问的内存页移到链表的头部，所以在活跃链表末尾的是链表中最老的内存页，守护进程 `kswapd` 的作用是平衡两个链表的长度，**将活跃链表末尾的内存页移至不活跃链表的队首等待回收**，而函数 [`shrink_zones`](https://elixir.bootlin.com/linux/v5.9.6/source/mm/vmscan.c#L2896) 会负责回收 LRU 链表中的不活跃内存页。
+
+### 换出
+
+**①**：触发内存回收机制后内核首先确定需要回收的物理页；
+
+**②**：调用`get_swap_page()`通过`swap core `为待回收的内存页寻找合适的`swap`地址（分区加`slot`）记为`swp_entry_t`；
+
+**③**：修改该内存页对应的所有进程（**[反向映射](http://www.wowotech.net/memory_management/reverse_mapping.html)**）的页表项`pte`为`swp_entry_t`，同时把该页面加入到 `swap cache `缓存；
+
+**④**：调用`swap_writepage()`通过`swap core`发起回写请求，待回写结束后释放该页面。
+
+![换出过程的起始和终止状态](img/Linux/swap-out.jpg)
+
+### 换入
+
+**①**：访问进程页表发现缺页，判断缺页是否可以由换入解决，如果可以则分配物理页，获取`swp_entry_t`进入换入过程；
+
+**②**：**先在`swap cache`中寻找**是否有对应的`swp_entry_t`，如果有则直接修改`pte`指向该`page`重新建立映射。
+
+**③**：如果在`swap cache`中未找到，**再在`swap core`**中通过`swp_entry_t`查找对应的`swap`分区和数据地址，发起并等待读操作完成。
+
+**④**：读操作完成后数据存储在物理页面中，增加`swap cache`到该页面的指向，共享该页面的其他进程访问对应的`slot`时会自动访问到该页，当所有共享该页面的进程都再次访问了这个页面的内容后`swap cache`才会解除对该页面的指向。
+
+## 内存压缩 ZRam
+
+在内存不足时将内存页进行压缩仍然存放在内存中，发生缺页的时候进行解压缩后换入，LZO压缩算法一般可以将内存页中的数据压缩至1/3。[更多参考](http://tinylab.org/linux-swap-and-zram/)
+
 # 其他补充
 
 [Linux内核中的锁](https://www.cnblogs.com/LoyenWang/p/12632532.html)
@@ -2179,3 +2326,7 @@ Linux通过将每个段的起始地址赋予一个随机偏移量**`random offse
 [glibc源码在线看](https://elixir.bootlin.com/glibc/latest/source)
 
 [Linux SystemV ipc 实现](https://blog.csdn.net/lcw_202/article/details/6076362#t12)：排版乱
+
+[struct page结构体](http://linux.laoqinren.net/kernel/memory-page/)
+
+[逆向映射的演进](http://www.wowotech.net/memory_management/reverse_mapping.html)
