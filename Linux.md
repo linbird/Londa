@@ -3,7 +3,7 @@
 ## [一切皆文件](https://cloud.tencent.com/developer/article/1512391)
 
 + 在Linux系统中，由于管道文件、socket文件等特殊文件的存在，一切皆文件退化为**一切皆文件描述符**。
-+ bash再处理到`/dev/tcp/host/port`的充电向时建立了一个`host:port`的socket连接，将socket的读写表现的和普通文件的读写一样，但是上述的文件在文件系统并不是真实存在的，知识bash对用户的一个善意的谎言。
++ bash再处理到`/dev/tcp/host/port`的充电向时建立了一个`host:port`的socket连接，将socket的读写表现的和普通文件的读写一样，但是上述的文件在文件系统并不是真实存在的，只是bash对用户的一个善意的谎言。
 + plan9系统承诺彻底贯彻执行一切皆文件，将分布在不同位置的所有资源作为文件统一在同一棵目录树中，实现Unix最初的愿景。
 
 ## 提供机制而非策略
@@ -2169,6 +2169,51 @@ Linux通过将每个段的起始地址赋予一个随机偏移量**`random offse
 进程的多个段的连续地址空间构成多个独立的内存区域。Linux内核使用**`vm_area_struct`结构**（包含区域起始和终止地址、指向该区域支持的系统调用函数集合的**`vm_ops`指针**）来表示一个独立的虚拟内存区域，一个进程拥有的多个`vm_area_struct`将被链接接起来方便进程访问（少时用链表、多时用红黑树）。
 
 ![Linux进程内存管理](img/Linux/vm_area_struct.png)
+
+
+
+# 补充部分
+
+Linux物理内存的每个区域`zone`都关联一组LRU链表，链表记录了物理页面的状态，物理内存的回收就依赖这些链表，在内存回收时优先使用不活跃的文件映射页面（因为换出文件映射的内存最多需要同步下数据，不需要把整页都换出），页面如果不是脏页可以直接使用，如果是脏页则需要同步或者换出后才能使用。
+
+```c
+enum lru_list {
+    LRU_INACTIVE_ANON = LRU_BASE,
+    LRU_ACTIVE_ANON = LRU_BASE + LRU_ACTIVE,
+    LRU_INACTIVE_FILE = LRU_BASE + LRU_FILE,
+    LRU_ACTIVE_FILE = LRU_BASE + LRU_FILE + LRU_ACTIVE,
+    LRU_UNEVICTABLE,//不可换出
+    NR_LRU_LISTS
+};
+
+struct lruvec {
+    struct list_head lists[NR_LRU_LISTS];//数组元素为每个类型页面组成的链表的表头
+    struct zone_reclaim_stat reclaim_stat;
+#ifdef CONFIG_MEMCG
+/*其关联的区域zone*/
+    struct zone *zone;
+#endif
+};
+
+struct swap_info_struct *swap_info[MAX_SWAPFILES];
+
+enum {//flag字段的可能取值
+    SWP_USED    = (1 << 0),    /* is slot in swap_info[] used? */
+    SWP_WRITEOK    = (1 << 1),    /* ok to write to this swap?    */
+    SWP_DISCARDABLE = (1 << 2),    /* swapon+blkdev support discard */
+    SWP_DISCARDING    = (1 << 3),    /* now discarding a free cluster */
+    SWP_SOLIDSTATE    = (1 << 4),    /* blkdev seeks are cheap */
+    SWP_CONTINUED    = (1 << 5),    /* swap_map has count continuation */
+    SWP_BLKDEV    = (1 << 6),    /* its a block device */
+    SWP_FILE    = (1 << 7),    /* set after swap_activate success */
+                    /* add others here before... */
+    SWP_SCANNING    = (1 << 8),    /* refcount in scan_swap_map */
+};
+```
+
+**`flag`**：
+
+所有的交换区按照优先级通过next字段连接起来，在换出时优先使用高优先级的交换区。
 
 # 其他补充
 
