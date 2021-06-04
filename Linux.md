@@ -44,7 +44,22 @@ VFS主要通过四个主要的结构体实现抽象层，每个结构体包含�
 
 **file_operations**：一系列函数指针的集合，其中包含所有可以使用的系统调用函数（例如`open、read、write、mmap`等）。每个打开文件（打开文件列表模块的一个表项）都可以连接到`file_operations`模块，从而对任何已打开的文件，通过系统调用函数，实现各种操作。
 
-**address_space**：表示一个文件在页缓存中已经缓存了的物理页。它是页缓存和外部设备中文件系统的桥梁，**关联了内存系统和文件系统**。
+**address_space**：一个`struct address_space`管理表示了一个文件在**所有已缓存物理页**。它是页缓存和外部设备中文件系统的桥梁，**关联了内存系统和文件系统**。
+
+```c
+struct address_space { //对应一个已缓存文件
+    struct inode *host;//该结构所属的indee或者block_device
+    unsigned long nrpages;//该文件占用的内存页数量
+    spinlock_t tree_lock;//保护page_tree
+    struct radix_tree_root page_tree;//指向管理所有属于本结构的物理页面的基数树根节点
+    struct spinlock_t i_mmap_lock;//保护immap
+    struct prio_tree_root i_mmap;//管理address_space所属文件的多个VMAs映射 
+    struct address_space_operations *a_ops;//该文件支持的所有操作函数表
+    //其他数据成员
+}
+```
+
+
 
 ### 索引节点对象 inide
 
@@ -1950,15 +1965,47 @@ key_t ftok(const char *pathname, int id);
 
 ### 3层管理架构
 
-Linux对内存的管理划分成三个层次，分别是Node、Zone、Page。对这三个层次简介如下：
+#### 内存架构
 
-![Linux内存管理的3个层次](img/Linux/mem-man.jpg)
+对于多个物理内存和多个CPU核心的组织目前主要为**UMA**（Uniform Memory Access）和**NUMA**（Non-Uniform Memory Access）两种架构。**UMA（均匀存储器存取）**架构下内存作为一个整体，每个CPU访问内存的方式和效果是完全相同的。而**NUMA（非均匀存储器存取）**架构下，内存被分为多个cell，每个核访问靠近它的本地内存的时候就比较快，访问其他CPU的内存或者全局内存的时候就比较慢。
+
+![两种并行架构](img/Linux/UMA-NUMA.jpg)
+
+#### 管理层次
+
+Linux系统将UMA架构抽象为**只有一个内存节点的NUMA架构**，基于NUMA架构将对内存的管理划分成三个层次，分别是Node、Zone、Page。
+
+![Linux内存管理的NUMA架构](img/Linux/Linux-NUMA.jpg)
 
 |       层次       |                             说明                             |
 | :--------------: | :----------------------------------------------------------: |
 | Node（存储节点） | CPU被划分成多个节点，每个节点都有自己的一块内存，可以参考NUMA架构有关节点的介绍 |
 |  Zone（管理区）  | 每一个Node（节点）中的内存被划分成多个管理区域（Zone），用于表示不同范围的内存 |
 |   Page（页面）   | 每一个管理区又进一步被划分为多个页面，页面是内存管理中最基础的分配单位 |
+
+![Linux内存管理的3个层次](img/Linux/mem-man.jpg)
+
+##### NODE
+
+##### [ZONE](# 物理地址布局)
+
+##### PAGE
+
+###### 数据结构
+
+```c
+struct page {//描述每一个物理内存页
+    unsigned long flags;//页帧的状态或者属性
+    atomic_t count;//该页正在被某个进程或者内核使用的引用计数
+    atomic_t _mapcount;//该页被映射的个数，即有多少个PTE
+    struct list_head lru;//
+    struct address_space *mapping;//
+    unsigned long index;//
+    ...  
+}
+```
+
+
 
 ### [Buddy伙伴系统（解决外碎片）](https://blog.csdn.net/gatieme/article/details/52420444)
 
@@ -2066,6 +2113,34 @@ struct array_cache {	//每个CPU核心一个实例
 
 内核**不能直接使用**此区域的内容，对此区域的访问需要临时建立映射关系，
 
+## 虚拟地址布局
+
+![32bit和64bit下的内存布局](img/Linux/mem-layout.jpg)
+
+### 位数与寻址空间
+
+#### 寻址空间
+
+指的是 CPU 对于内存寻址的能力。计算机对内存的寻找范围由**总线宽度**（处理器的地址总线的位数）决定的，也可以理解为 **CPU 寄存器位数**，这二者一般是匹配的。地址总线为 N 位（N 通常都是 8 的整数倍；也说 N 根数据总线）的 CPU 寻址范围是$2^NB$。目前IA32可使用的地址线是36个，可使用的最大物理地址是$2^{36}B$，折合64GB，可用的地址空间是4GB。Intel® 64地址线是46个，最大的物理地址是$2^{46}B$，折合64TB，可用地址空间也是这么大
+
+#### 位数
+
+CPU一次能够处理的二进制的位数。
+
+### `32bit`布局
+
+![32it Linux物理地址与虚拟地址的映射](img/Linux/PA-VA.jpg)
+
+### `64bit`布局
+
+配备64位处理器的64位操作系统的**可寻址的地址长度一般没有64b**，造成这个现象有两个原因，一是目前的64位处理器的地址线位数的设计并不是64位（因为并不需要如此之大），二是指令集中地址部分的位数。目前64位处理器的寻址能力已经足够大，因此Linux在64bit下的内存布局下**用户虚拟空间不再挨着内核虚拟空间**，而是分别占据底部和顶部，中间空出来的区域可以辅助进行地址有效性的检测。
+
+![64bit下的虚拟内存布局](img/Linux/64b-mem-layout.jpg)
+
+此时内核的虚拟地址空间已经足够大，当它要访问所有的物理内存时可以直接映射，不再需要`ZONE_HIGHMEM`动态映射机制。
+
+![64bit下内核空间的地址映射](img/Linux/64bit-kernal-map.jpg)
+
 ## 物理地址与虚拟地址
 
 由于开启了分页机制，**内核需要访问全部物理地址空间**的话，必须先建立映射关系，然后通过虚拟地址来访问。在32bit Linux中内核简化了分段机制（Intel由于历史原因必须支持分段），将最高的1GB虚拟内存空间作为内核空间（内核对应的虚拟地址空间对应的物理内存会**常驻内存**，不会被OS换出到磁盘等设备，**所有的进程共享内核空间地址**），对内核空间的访问将受到硬件保护(0级才可访问)，低3GB虚拟内存空间作为用户空间（包含代码段、全局变量、BSS、函数栈、堆内存、映射区等）供用户进程使用（3级可访问）。
@@ -2074,13 +2149,11 @@ struct array_cache {	//每个CPU核心一个实例
 
 ![共享内核空间](img/Linux/user-kernal-space.png)
 
-![Linux物理地址与虚拟地址的映射](img/Linux/PA-VA.jpg)
-
 ## [内核空间布局](https://blog.csdn.net/qq_38410730/article/details/81105132)
 
 内核为了能够访问所有的物理地址空间，就要**将全部物理地址空间映射到的内核线性空间**中。于是内核将0~896M的物理地址空间**一对一映射**到自己的线性地址空间（对应`ZONE_DMA`和`ZONE_NORMAL`区域）中，这样它便可以随时访问里的物理页面。而由于内核的虚拟地址空间的限制，内核按照常规的映射方式不能访问到896MB之后的全部物理地址空间（即**`ZONE_HIGHMEM`**区域），在32位Linux下，内核采取了**动态映射**的方法，即按需的将`ZONE_HIGHMEM`里的物理页面映射到内核地址空间的最后128M线性地址空间里，使用完之后释放映射关系，循环使用这128M线性地址空间以映射到其他所有物理页面。[来源](https://blog.csdn.net/ibless/article/details/81545359) [来源](https://blog.csdn.net/farmwang/article/details/66976818?utm_source=debugrun&utm_medium=referral)
 
-![内核地址空间分布](img/Linux/kernel-space-layout.jpg)
+![32bit地址空间分布](img/Linux/kernel-space-layout.jpg)
 
 ### 直接/线性映射区域（`896MB`）
 
@@ -2394,3 +2467,7 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 [struct page结构体](http://linux.laoqinren.net/kernel/memory-page/)
 
 [逆向映射的演进](http://www.wowotech.net/memory_management/reverse_mapping.html)
+
+[Windows内存布局和不同架构的内存访问](https://www.eefocus.com/mcu-dsp/400488)
+
+[服务器体系(SMP, NUMA, MPP)与共享存储器架构(UMA和NUMA)](https://www.cnblogs.com/linhaostudy/p/9980383.html)
