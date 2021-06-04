@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="840px" height="388px" viewBox="0 0 840 388" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 52.6 (67491) - http://www.bohemiancoding.com/sketch -->
+    <title>lruvec结构</title>
+    <desc>Created with Sketch.</desc>
+    <g id="mem_cgroup结构" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="Group-7" transform="translate(69.000000, 32.000000)">
+            <rect id="Rectangle" stroke="#000000" fill="#FFFFFF" x="0.5" y="79.5" width="164" height="204"></rect>
+            <path d="M0,135 L165,135" id="Line" stroke="#000000" fill="#000000" stroke-linecap="square"></path>
+            <path d="M0,163 L165,163" id="Line" stroke="#000000" fill="#000000" stroke-linecap="square"></path>
+            <text id="lists[2]" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="51.28" y="156">lists[2]</tspan>
+            </text>
+            <text id="lists[3]" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="51.28" y="185">lists[3]</tspan>
+            </text>
+            <path d="M0,107 L165,107" id="Line" stroke="#000000" fill="#000000" stroke-linecap="square"></path>
+            <text id="lists[0]" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="51.28" y="100">lists[0]</tspan>
+            </text>
+            <text id="lists[1]" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="53.27" y="127">lists[1]</tspan>
+            </text>
+            <path d="M0,193 L165,193" id="Line" stroke="#000000" fill="#000000" stroke-linecap="square"></path>
+            <path d="M0,225 L165,225" id="Line" stroke="#000000" fill="#000000" stroke-linecap="square"></path>
+            <text id="lists[4]" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="51.28" y="218">lists[4]</tspan>
+            </text>
+            <text id="reclaim_stat" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="26.04" y="250">reclaim_stat</tspan>
+            </text>
+            <path d="M0,255 L165,255" id="Line" stroke="#000000" fill="#000000" stroke-linecap="square"></path>
+            <text id="zone" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="61.13" y="280">zone</tspan>
+            </text>
+            <path id="Line-4" d="M82.5,70.5 L82.5,30.8 L82.5,30.3 L83.5,30.3 L83.5,30.8 L83.5,70.5 L87.5,70.5 L83,79.5 L78.5,70.5 L82.5,70.5 Z" fill="#000000" fill-rule="nonzero"></path>
+            <text id="struct-lruvec" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="25.36" y="21">struct lruvec</tspan>
+            </text>
+            <text id="INACTIVE_ANON" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#FF0000">
+                <tspan x="438.15" y="95">INACTIVE_ANON</tspan>
+            </text>
+            <text id="INACTIVE_FILE" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#FF0000">
+                <tspan x="497.38" y="157">INACTIVE_FILE</tspan>
+            </text>
+            <text id="ACTIVE_ANON" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#FF0000">
+                <tspan x="375.21" y="128">ACTIVE_ANON</tspan>
+            </text>
+            <text id="ACTIVE_FILE" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#FF0000">
+                <tspan x="428.44" y="189">ACTIVE_FILE</tspan>
+            </text>
+            <text id="UNEVICTABLE" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#FF0000">
+                <tspan x="566.48" y="222">UNEVICTABLE</tspan>
+            </text>
+            <path id="Line-7" d="M389,91.5 L425.5,91.5 L426,91.5 L426,92.5 L425.5,92.5 L389,92.5 L389,96.5 L380,92 L389,87.5 L389,91.5 Z" fill="#060606" fill-rule="nonzero"></path>
+            <path id="Line-7" d="M326,123.5 L362.5,123.5 L363,123.5 L363,124.5 L362.5,124.5 L326,124.5 L326,128.5 L317,124 L326,119.5 L326,123.5 Z" fill="#060606" fill-rule="nonzero"></path>
+            <path id="Line-7" d="M450,150.5 L486.5,150.5 L487,150.5 L487,151.5 L486.5,151.5 L450,151.5 L450,155.5 L441,151 L450,146.5 L450,150.5 Z" fill="#060606" fill-rule="nonzero"></path>
+            <path id="Line-7" d="M378,182.5 L414.5,182.5 L415,182.5 L415,183.5 L414.5,183.5 L378,183.5 L378,187.5 L369,183 L378,178.5 L378,182.5 Z" fill="#060606" fill-rule="nonzero"></path>
+            <path id="Line-7" d="M515,213.5 L551.5,213.5 L552,213.5 L552,214.5 L551.5,214.5 L515,214.5 L515,218.5 L506,214 L515,209.5 L515,213.5 Z" fill="#060606" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="197.5" y="84.5" width="32" height="18"></rect>
+            <rect id="Rectangle" stroke="#000000" x="261.5" y="84.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M238.5,93 L254,93 L254,89 L263,93.5 L254,98 L254,94 L238.5,94 L238.5,98 L229.5,93.5 L238.5,89 L238.5,93 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="329.5" y="84.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M303.5,93 L319,93 L319,89 L328,93.5 L319,98 L319,94 L303.5,94 L303.5,98 L294.5,93.5 L303.5,89 L303.5,93 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="350.5" y="303.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M172.5,93 L188,93 L188,89 L197,93.5 L188,98 L188,94 L172.5,94 L172.5,98 L163.5,93.5 L172.5,89 L172.5,93 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="197.5" y="113.5" width="32" height="18"></rect>
+            <rect id="Rectangle" stroke="#000000" x="261.5" y="113.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M238.5,122 L254,122 L254,118 L263,122.5 L254,127 L254,123 L238.5,123 L238.5,127 L229.5,122.5 L238.5,118 L238.5,122 Z" fill="#000000" fill-rule="nonzero"></path>
+            <path id="Line-8" d="M172.5,122 L188,122 L188,118 L197,122.5 L188,127 L188,123 L172.5,123 L172.5,127 L163.5,122.5 L172.5,118 L172.5,122 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="197.5" y="142.5" width="32" height="18"></rect>
+            <rect id="Rectangle" stroke="#000000" x="261.5" y="142.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M238.5,151 L254,151 L254,147 L263,151.5 L254,156 L254,152 L238.5,152 L238.5,156 L229.5,151.5 L238.5,147 L238.5,151 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="329.5" y="142.5" width="32" height="18"></rect>
+            <rect id="Rectangle" stroke="#000000" x="393.5" y="142.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M370.5,151 L386,151 L386,147 L395,151.5 L386,156 L386,152 L370.5,152 L370.5,156 L361.5,151.5 L370.5,147 L370.5,151 Z" fill="#000000" fill-rule="nonzero"></path>
+            <path id="Line-8" d="M303.5,151 L319,151 L319,147 L328,151.5 L319,156 L319,152 L303.5,152 L303.5,156 L294.5,151.5 L303.5,147 L303.5,151 Z" fill="#000000" fill-rule="nonzero"></path>
+            <path id="Line-8" d="M172.5,151 L188,151 L188,147 L197,151.5 L188,156 L188,152 L172.5,152 L172.5,156 L163.5,151.5 L172.5,147 L172.5,151 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="197.5" y="172.5" width="32" height="18"></rect>
+            <rect id="Rectangle" stroke="#000000" x="261.5" y="172.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M238.5,181 L254,181 L254,177 L263,181.5 L254,186 L254,182 L238.5,182 L238.5,186 L229.5,181.5 L238.5,177 L238.5,181 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="329.5" y="172.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M303.5,181 L319,181 L319,177 L328,181.5 L319,186 L319,182 L303.5,182 L303.5,186 L294.5,181.5 L303.5,177 L303.5,181 Z" fill="#000000" fill-rule="nonzero"></path>
+            <path id="Line-8" d="M172.5,181 L188,181 L188,177 L197,181.5 L188,186 L188,182 L172.5,182 L172.5,186 L163.5,181.5 L172.5,177 L172.5,181 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="197.5" y="205.5" width="32" height="18"></rect>
+            <rect id="Rectangle" stroke="#000000" x="261.5" y="205.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M238.5,214 L254,214 L254,210 L263,214.5 L254,219 L254,215 L238.5,215 L238.5,219 L229.5,214.5 L238.5,210 L238.5,214 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="329.5" y="205.5" width="32" height="18"></rect>
+            <rect id="Rectangle" stroke="#000000" x="393.5" y="205.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M370.5,214 L386,214 L386,210 L395,214.5 L386,219 L386,215 L370.5,215 L370.5,219 L361.5,214.5 L370.5,210 L370.5,214 Z" fill="#000000" fill-rule="nonzero"></path>
+            <rect id="Rectangle" stroke="#000000" x="459.5" y="205.5" width="32" height="18"></rect>
+            <path id="Line-8" d="M436.5,214 L452,214 L452,210 L461,214.5 L452,219 L452,215 L436.5,215 L436.5,219 L427.5,214.5 L436.5,210 L436.5,214 Z" fill="#000000" fill-rule="nonzero"></path>
+            <path id="Line-8" d="M303.5,214 L319,214 L319,210 L328,214.5 L319,219 L319,215 L303.5,215 L303.5,219 L294.5,214.5 L303.5,210 L303.5,214 Z" fill="#000000" fill-rule="nonzero"></path>
+            <path id="Line-8" d="M172.5,214 L188,214 L188,210 L197,214.5 L188,219 L188,215 L172.5,215 L172.5,219 L163.5,214.5 L172.5,210 L172.5,214 Z" fill="#000000" fill-rule="nonzero"></path>
+            <text id="page" font-family="PingFangSC-Regular, PingFang SC" font-size="20" font-weight="normal" fill="#000000">
+                <tspan x="390.26" y="317"> page</tspan>
+            </text>
+        </g>
+    </g>
+</svg>
