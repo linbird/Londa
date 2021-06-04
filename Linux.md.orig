@@ -2170,6 +2170,7 @@ Linux通过将每个段的起始地址赋予一个随机偏移量**`random offse
 
 ![Linux进程内存管理](img/Linux/vm_area_struct.png)
 
+<<<<<<< HEAD
 # [交换空间](https://blog.csdn.net/qkhhyga2016/article/details/88722458)
 
 ![Linux swap子系统](img/Linux/swap2zramorfile.png)
@@ -2316,6 +2317,7 @@ enum lru_list {
 ## 内存压缩 ZRam
 
 在内存不足时将内存页进行压缩仍然存放在内存中，发生缺页的时候进行解压缩后换入，LZO压缩算法一般可以将内存页中的数据压缩至1/3。[更多参考](http://tinylab.org/linux-swap-and-zram/)
+=======
 
 
 # 补充部分
@@ -2360,6 +2362,7 @@ enum {//flag字段的可能取值
 **`flag`**：
 
 所有的交换区按照优先级通过next字段连接起来，在换出时优先使用高优先级的交换区。
+>>>>>>> bdbaee6644fef70b00ae3bfcc99fbdd42dc617e6
 
 # 其他补充
 
