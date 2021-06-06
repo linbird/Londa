@@ -76,6 +76,22 @@ struct address_space { //对应一个已缓存文件，管理着若干个页
 
 内核通过进程的`task_struct`中的`files`域指针找到**`file_struct`结构体**，该结构体包含了一个由`file *`构成的**已打开文件描述符表**，表中的每一个指针指向VFS中文件列表中的**文件对象**。
 
+### 文件相关三张表
+
+![三张表的关系](./img/Linux/open-file.png)
+
+#### 进程级文件描述附表
+
+存储了所有本进程打开的文件描述符信息及指向对应文件表项的指针。
+
+#### 系统级文件打开表
+
+文件表保存了进程对文件读写的偏移量以及进程对文件的存取权限。
+
+#### 系统级inode表
+
+它记录了文件的类型、权限、UID、GID、link count、文件大小、创建时间已经文件存放位置等文件的基本属性。
+
 ## 特殊文件系统
 
 |   文件系统    |              内容              |                 作用                 |
@@ -674,6 +690,12 @@ int clone(int (*fn)(void *), void *child_stack, int flags, void *arg);
 |   `CLONE_PID`   |                子进程在创建时PID与父进程一致                 |
 
 可以更细粒度地控制与子进程共享的资源，利用它可以创建线程、父子进程、兄弟进程。利用`clone`创建出的新运行实体和**不再复制原运行实体的栈空间**，而是借助`child_stack`创建一个新的空间。
+
+## 文件描述符克隆
+
+### `dup`
+
+
 
 # 进程通信
 
@@ -2149,6 +2171,95 @@ void call_rcu(struct rcu_head *head,void (*func)(struct rcu_head *rcu));
 ## 互斥锁
 
 ## 文件锁
+
+### 先导概念
+
+#### 文件锁
+
+锁的最小粒度为文件，
+
+#### 记录锁
+
+锁的最小粒度为字节，可以只对文件中的部分字节进行加锁保护
+
+#### 建议锁（Advisory locking）
+
+也叫事务锁，是Linux**默认的锁**类型。一个进程可以忽略其他进程加的锁，直接对目标文件进行读写操作。因而，只有当前进程主动调用 `flock`去检测是否已有其他进程对目标文件加了锁，文件锁才会在多进程的同步中起到作用。
+
+#### 强制锁（Mandatory locking）
+
+内核管理的底层锁，一个进程锁定后其他用户不能打开
+
+### 实现
+
+#### POSIX文件锁
+
+##### 数据结构
+
+```c
+struct flock {
+	short l_type;//锁类型：共享读锁F_RDLCK，独占性写锁F_WRLCK，解锁F_UNLCK
+	short l_whence;//作为l_start的参照点，可以取SEEK_SET(文件开头), SEEK_CUR, SEEK_END
+	off_t l_start;//相对l_where的偏移点，从此点开始的字节加锁
+	off_t l_len;//以字节为单位的要加锁的区域字节长度
+	pid_t l_pid;/* PID of process blocking our lock(set by F_GETLK and F_OFD_GETLK) */
+	//...其他数据
+};
+```
+
+锁可以从**除文件头之外的任何位置（包含文件尾甚至文件尾）开始**。加锁长度`l_len=0`代表锁的范围可以扩大到最大可能偏移量，这意味着不管向文件中追加多少数据，它们都可以处于锁的范围内，而且此时加锁的起始位置`l_where`可以任意。
+
+##### 操作
+
+```c
+// 库函数lockf只是对fcntl的封装
+int fcntl(int fd, int cmd, .../*struct flock *flockptr*/);
+//@Parameters:
+//	fd: 待操作的文件描述符
+//	cmd: 具体操作，F_GETLK, F_SETLK, F_SETLKW中的一个
+//		F_GETLK: 检查一个文件上是否被锁住，如果是就可以获取该文件锁，并存放于fcntl()的第三个参数lock里
+//		F_SETLK: 获取或释放由flockptr所描述的锁，如果flockptr想获取锁而内核阻止获取该锁，函数返回错误
+//		F_SETLKW(ait):F_SETLK的阻塞版本，如果进程无法获取锁则进入休眠直到进程获得锁或者信号中断
+//	flockptr： 可变参数用于文件锁时的具体参数
+//@Return value
+//	返回值：若成功返回值依赖于cmd；失败返回-1
+```
+
+#### [BSD文件锁](https://zhuanlan.zhihu.com/p/25134841)
+
+```c
+#define LOCK_SH 1 /* Shared lock.  */
+#define LOCK_EX 2 /* Exclusive lock.  */
+#define LOCK_UN 8 /* Unlock.  */                                 #define LOCK_NB 4 /* Don't block when locking.  */
+
+int flock(int fd, int operation);
+//@Parameters:
+//	fd: 待操作的文件描述符
+//	operation: 取LOCK_SH(共享锁)、LOCK_EX（独占锁）或LOCK_UN（无锁），支持与LOCK_NB取或
+//@Return value
+//	返回值：若成功返回0；失败返回-1
+```
+
+
+
+### [比较](https://www.cnblogs.com/charlesblc/p/6287631.html)
+
+进程在打开一个文件时，涉及到进程级文件描述符表、系统级打开文件表（dup文件描述符是会出现重复项）和系统级inode表。两种锁的实现都是在inode上进行加锁，但是BSD认为所的持有者是系统级打开文件表、而POSIX认为是进程持有了锁。[参考来源](https://yxkemiya.github.io/2019/08/19/file-lock/) 此处有问题(https://www.cnblogs.com/charlesblc/p/6287631.html)
+
+![打开文件时三个表之间的关系](./img/Linux/open-file.png)
+
+| 实现  |   API   |                锁类型                |  NFS   | 递归 |
+| :---: | :-----: | :----------------------------------: | :----: | :--: |
+|  BSD  | `flock` |    文件锁；共享锁/排它锁；建议锁     | 不支持 | 支持 |
+| POSIX | `fcntl` | 文件锁/记录锁；排它锁；建议锁/强制锁 |  支持  | 支持 |
+
+对同一个文件使用上面两种机制的锁时互不影响 
+
+### NOTE
+
+在单个进程下，如果在已有的锁上加新锁，则新锁会替换旧锁，也不管锁是何种类型。在多进程下遵循读写锁的一般规则。
+
+[`fcntl`支持强制性锁](http://blog.jobbole.com/16882/)：对一个特定文件打开其设置组ID位(S_ISGID)，并关闭其组执行位(S_IXGRP)，则对该文件开启了强制性锁机制。再Linux中如果要使用强制性锁，则要在挂载文件系统时使用`mount -o mand`打开该机制。
 
 # 内存布局
 
