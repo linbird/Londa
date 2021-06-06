@@ -107,21 +107,36 @@ Linux将所有的执行实体都称之为任务Task（Task是进程概念在Linu
 
 线程ID、寄存器、栈的局部变量、返回地址、错误码errno、信号掩码、优先级等
 
-## 多级页表
+## 调度时机
 
-32bit Linux采用了3级页表$[PGD(16b)|PMD(4b)|PTE(4b)|Offset(12b)]$。
 
-![Linux的三级页表](img/Linux/layer3-page.PNG)
-
-![三级页表寻址过程](img/Linux/get-address.PNG)
-
-64bit采用了4级页表$[PG_{lobal}D|PU_{pper}D|PM_{iddle}D|PTE|Offset]$。
-
-![四级页表](img/Linux/four-layer-pte.png)
 
 ## 抢占内核
 
-在Linux 2.6以前，内核只支持用户态抢占，内核态代码会一直运行直到代码被完成或者被阻塞(系统调用可以被阻塞)。Linux从2.6开始支持可抢占式内核，kernel可以在任何时间点（因为中断造成的抢占可以发生在任何时间）上抢占一个任务（要求此时间点的内核代码不持有锁处于临界区且内核代码[可重入](https://www.wikiwand.com/zh-hans/%E5%8F%AF%E9%87%8D%E5%85%A5)），从中断处理例程返回到内核态时，kernel会检查是否可以抢占和是否需要重新调度。[参考1](https://github.com/IMCG/-/blob/master/kernel/Linux%E5%86%85%E6%A0%B8%E6%80%81%E6%8A%A2%E5%8D%A0%E6%9C%BA%E5%88%B6%E5%88%86%E6%9E%90.md)
+### 非抢占式内核
+
+在Linux 2.6以前，内核只支持用户态抢占，在**内核态执行的进程不可被抢占**，它会一直运行直到任务完成或者被阻塞(系统调用可以被阻塞)。异步事件由中断服务处理，中断服务可以使一个高优先级的任务由挂起状态转为就绪状态。但中断服务以后的控制权还是回到原来被中断了的那个任务，直到该任务主动放弃CPU的使用权时，就绪的高优先级的任务才能获得CPU的使用权。
+
+![非抢占式内核](img/Linux/uninterrupt-kernal.png)
+
+### 抢占式内核
+
+Linux从2.6开始支持可抢占式内核，运行的任务可以在任何时间点（因为中断造成的抢占可以发生在任何时间）上被抢占（要求此时间点的内核代码**不持有锁（处于临界区）且内核代码[可重入](https://www.wikiwand.com/zh-hans/%E5%8F%AF%E9%87%8D%E5%85%A5)**）。如果被高优先级的进程抢占则执行上面相同的过程，如果被中断抢占，中断处理程序返回到内核态时，内核会检查是否有优先级更高的就绪任务，有则挂起被抢占的进程。[参考1](https://github.com/IMCG/-/blob/master/kernel/Linux%E5%86%85%E6%A0%B8%E6%80%81%E6%8A%A2%E5%8D%A0%E6%9C%BA%E5%88%B6%E5%88%86%E6%9E%90.md)
+
+![抢占式内核](img/Linux/interrupt-kernal.png)
+
+#### 可重入函数
+
+所谓可重入是指一个可以**被多个任务调用**的过程，任务在调用时不必担心数据是否会出错。他对函数的设计与实现提出了一系列要求：①不能含有静态变量、②不能返回静态变量的地址、③只能处理调用者提供的数据、④不能依赖于单实例模式资源的锁、⑤不能调用不可重入的函数、⑥内部尽量不用 malloc 和 free 之类的方法
+
+### 比较
+
+|  内核  |               响应速度               |           内核函数要求           |
+| :----: | :----------------------------------: | :------------------------------: |
+| 非抢占 | 中断响应快、任务响应慢（就绪需等待） |           不可重入函数           |
+|  抢占  |  任务响应快（高优先级就绪即可运行）  | 调用不可重入函数时要满足互斥条件 |
+
+![Linux抢占与非抢占](img/Linux/uninterrupt-interrupt.png)
 
 ## CFS调度算法
 
@@ -1696,9 +1711,9 @@ DECLARE_RWSEM(name)//声明一个读写信号量name并对其进行初始化
 void init_rwsem(struct rw_semaphore *sem);//对读写信号量sem进行初始化
 ```
 
-#### 获取锁
+#### 获取信号量
 
-##### 读者获取锁
+##### 读者获取信号量
 
 ```c
 void down_read(struct rw_semaphore *sem);//会导致调用者睡眠，因此只能在进程上下文使用。
@@ -1711,7 +1726,7 @@ int down_read_trylock(struct rw_semaphore *sem);//不会导致调用者睡眠
 
 读者获取锁的时候，如果没有写者持有，那就可以支持多个读者直接获取；而如果此时写者持有了锁，读者获取失败，它将把自己添加到等待列表中（这个**等待列表中可能已经存放了其他来获取锁的读者或者写者**），在将读者真正睡眠等待前，还会**再一次判断**此时是否有写者释放了该锁，释放了的话，那就需要对睡眠等待在该锁的任务进行唤醒操作了。
 
-##### 写者获取锁
+##### 写者获取信号量
 
 ```c
 void down_write(struct rw_semaphore *sem);//会导致调用者睡眠，因此只能在进程上下文使用。
@@ -1724,11 +1739,11 @@ int down_write_trylock(struct rw_semaphore *sem);////不会导致调用者睡眠
 
 写者获取锁时，只要锁被其他读者或者写者持有了，则获取锁失败，然后进行失败情况处理。在失败情况下，它本身会**先尝试进行optimistic  spin**去尝试获取锁，如果获取失败**后进入慢速路径**。慢速路径中去判断等待列表中是否有任务在睡眠等待，并且会再次尝试去查看是否已经有写者释放了锁，写者释放了锁，并且只有读者在睡眠等待，那么此时应该优先让这些先等待的任务唤醒。
 
-#### 释放锁
+#### 释放信号量
 
 唤醒操作中，**优先处理自旋未休眠的任务**，没有自旋任务才去唤醒等待列表中的任务；唤醒等待列表中的任务时，由于等待列表中可能存放的是读者与写者的组合，需要分情况处理：如果第一个任务是写者，则直接唤醒该写者，否则将唤醒排在前边的**连续**几个读者；
 
-##### 读者释放锁
+##### 读者释放信号量
 
 ```c
 void up_read(struct rw_semaphore *sem);
@@ -1736,7 +1751,7 @@ void up_read(struct rw_semaphore *sem);
 
 ![读者释放锁](img/Linux/reader-V.png)
 
-##### 写者释放锁
+##### 写者释放信号量
 
 ```c
 void up_write(struct rw_semaphore *sem);
@@ -1977,11 +1992,163 @@ key_t ftok(const char *pathname, int id);
 
 # 同步机制
 
+由于**多进程、内核抢占、异常、中断**的引入，**内核的执行路径（进程）总以交错的方式运行**，都不可避免的对一些关键数据结构进行交错访问（共享）和修改（竞争），如果不采取必要的同步（**避免多个进程并发并发访问同一临界资源**）措施将导致这些数据结构状态的不一致，进而导致系统崩溃。
+
+![同步机制比较](img/Linux/sync-compare.webp)
+
+## 禁用中断
+
+**仅仅适用于单处理器不可抢占系统**，通过Linux系统中提供了两个宏`local_irq_enable`与 `local_irq_disable`来使能和禁用中断。这种方式会使中断不能被及时响应，要求关开中断之间的代码执行时间不能过长。
+
+## 原子操作
+
+与硬件**架构强相关**使用**汇编实现**，主要**用于实现资源计数**。
+
+```c
+typedef struct{//重点在于不同架构下的API实现
+    int counter;
+}atomic_t;
+```
+
+![arm平台原子操作的API](img/Linux/arm-atomic-api.webp)
+
 ## 自旋锁
+
+**基于忙等原则**的**针对多处理器**的同步机制，它只允许唯一的一个执行路径持有自旋锁，其他路径都不挂起的等待获取自旋锁。
+
+### 一般自旋锁
+
+```c
+typedef struct {//IA64的实现
+	volatile unsigned int lock;//计数，为1代表可用状态
+} arch_spinlock_t;
+
+typedef struct raw_spinlock {
+	arch_spinlock_t raw_lock;//自旋锁的实际实现，与体系结构相关
+} raw_spinlock_t;
+```
+
+#### 一般接口(宏)
+
+```c
+spin_lock_init(lock)  //声明自旋锁是，初始化为锁定状态
+spin_lock(lock)//锁定自旋锁，成功则返回，否则循环等待自旋锁变为空闲
+spin_unlock(lock)//释放自旋锁，重新设置为未锁定状态
+spin_is_locked(lock)//判断当前锁是否处于锁定状态。若是，返回1.
+spin_trylock(lock)//尝试锁定自旋锁lock,不成功则返回0，否则返回1
+spin_unlock_wait(lock)//循环等待，直到自旋锁lock变为可用状态。
+spin_can_lock(lock)//判断该自旋锁是否处于空闲状态。
+```
+
+#### 中断支持接口(宏)
+
+为了避免持有锁的进程被中断打断，而中断也需要锁而造成**死锁**的情况出现。在多处理器系统中，当锁定一个自旋锁时，需要首先禁止内核态抢占，然后尝试锁定自旋锁，在锁定失败时执行一个死循环等待自旋锁被释放；当解锁一个自旋锁时，首先释放当前自旋锁，然后使能内核态抢占。当系统是单处理器系统时，自旋锁的加锁、解锁过程分为别退化为禁止内核态抢占、使能内核态抢占。
+
+```c
+spin_lock_irq(lock)//关中断、锁定自旋锁
+spin_unlock_irq(lock)//释放自旋锁、开中断
+spin_trylock_irq(lock)//能锁定自旋锁就关中断并获取自旋锁，否则直接返回
+    
+spin_lock_irqsave(lock, flags)//保存标志寄存器至flag、关中断、锁定自旋锁
+spin_unlock_irqrestore(lock, flags)//释放自旋锁、开中断、从flag恢复到标志寄存器
+spin_trylock_irqsave(lock)//能锁定自旋锁就就关中断并获取自旋锁，否则直接返回
+    
+spin_lock_bh(lock)//关软中断、锁定自旋锁
+spin_unlock_bh(lock)//释放自旋锁、开软中断
+spin_trylock_bq(lock)//能锁定自旋锁就关软中断、锁定自旋锁
+```
+
+性能：`spin_lock > spin_lock_bh > spin_lock_irq > spin_lock_irqsave`。
+
+安全性：`spin_lock_irqsave > spin_lock_irq > spin_lock_bh >spin_lock`。
+
+## 读写锁
+
+![读写自旋锁与RCU的比较](img/Linux/RCU-swspin.gif)
+
+### 读写自旋锁
+
+允许**多个读者进程同时进入**临界区或一个**写者独占进入**临界区，交错访问同一个临界资源，提高了系统的并发能力，提升了系统的吞吐量。
+
+```c
+typedef struct {
+	volatile unsigned int read_counter	: 31;
+	volatile unsigned int write_lock	:  1;
+} arch_rwlock_t;
+
+typedef struct {
+	arch_rwlock_t raw_lock;
+} rwlock_t;
+
+DEFINE_RWLOCK(lock) //声明读写自旋锁lock，并初始化为未锁定状态
+write_lock(lock) //以写方式锁定，若成功则返回，否则循环等待
+write_unlock(lock) //解除写方式的锁定，重设为未锁定状态
+read_lock(lock) //以读方式锁定，若成功则返回，否则循环等待
+read_unlock(lock) //解除读方式的锁定，重设为未锁定状态
+    
+//中断支持接口(宏)与一般锁接口相似
+```
+
+### 顺序自旋锁
+
+用于**解决读写锁由于存在大量的读者而造成写者饿死**的问题，在对某一共享数据**读取时不加锁，写的时候加锁**。所以**只有写者之间相互互斥、读者之间、读写者之间不互斥**，读者在写者写时任然可以读取数据，但是为了保证读取的过程中不会因为写入者的出现导致该共享数据的更新，需要**依赖顺序值`seqcount`**：写者在**写之前会改变`seqcount`**，读取者在开始读取前和读取完成后**两次并比较**读取该`sequence`，如果两者不一致则本次读取无效。
+
+```c
+typedef struct seqcount {
+	unsigned sequence;
+} seqcount_t;
+
+typedef struct {
+	struct seqcount seqcount;//用于同步写者访问的顺序以更新读者访问
+    spinlock_t lock;//实现写操作之间的互斥
+} seqlock_t;
+
+seqlock_init(seqlock) //初始化为未锁定状态
+read_seqbgin()//读取seqcount值
+read_seqretry() //判断当前seqcount是否与seqcount一致
+write_seqlock(lock) //尝试以写锁定方式锁定顺序锁
+write_sequnlock(lock) //解除对顺序锁的写方式锁定，重设为未锁定状态。
+    
+//中断支持接口(宏)与一般锁接口相似
+```
+
+**NOTE**：要求被保护的**共享资源不含有指针**，因为写者可能使得指针失效，但读者如果正要访问该指针，将导致OOPs。如果读者在读操作期间，写者已经发生了写操作，那么，读者必须重新读取数据，以便确保得到的数据是完整的。顺序锁**适用于读多写少**的情况。
+
+### [RCU（Read-Copy Update）](http://www.wowotech.net/kernel_synchronization/rcu_fundamentals.html)
+
+Read-Copy Update是内核中提供的一种**免锁的同步机制**，它将读进程和写入进程访问的共享**数据放在指针p中**，读进程通过p读数据，写进程通过修改p写数据，从而允许多个读者和多个写者同时访问被保护的数据。要想确保RCU机制的正确使用所有的RCU相关操作都应该使用内核提供的RCU API函数。
+
+![RCU基本思路](img/Linux/RCU.gif)
+
+#### 临界区管理
+
+RCU不基于锁、其字段是耦合在进程描述符和CPU变量中的，是一种与系统强耦合的同步机制，RCU负责管理进程内所有的临界区，进程通过调用`rcu_read_lock`与`rcu_read_unlock`标记读者临界区，通过`rcu_assign_pointer`、`list_add_rcu`将数据纳入保护区，当写者copy出新数据时在读者全部退出临界区后，将新数据指针更新，旧数据将在垃圾收集器的检查中被释放，但存在延迟。
+
+```c
+void call_rcu(struct rcu_head *head,void (*func)(struct rcu_head *rcu));
+```
+
+#### 读者
+
+读者**对指针的引用必须要在临界区中完成**，离开临界区之后不应该出现任何形式的对该指针的引用。在临界区内的代码**不应该被切换或导致任何形式的进程切换**（一般要关掉内核抢占，中断可以不关）。
+
+#### 写者
+
+所有写入者需要调用`call_rcu()`**向内核注册一个回调函数**（主要功能是释放老指针指向的内存空间，在内核里以链表组织着回调函数）。之后首先要重新分配一个新的内存空间做作为共享数据区。然后将老数据区内的数据**复制**到新数据区，并根据需要**修改**新数据区，最后在合适的时机用新数据区指针**原子的更新替换**掉老数据区的指针。
+
+#### [释放机制](https://blog.csdn.net/fzubbsc/article/details/37736683)
+
+老指针被新指针更新后**不能马上释放老指针**（可能某些CPU上有进程仅仅获取到老指针进入临界区而没有引用该指针），只有当内核确定**所有对老指针的引用都结束时**（**所有cpu都至少发生一次进程切换**，因为rcu临界区不允许进程切换，切换则意味着出了临界区、再进入一定是新指针）才会调用写者注册的回调释放老指针的空间。
+
+#### 限制
+
+①：RCU只保护动态分配并通过指针引用的数据结构
+
+②：在被RCU保护的临界区中，任何内核路径都不能睡眠（经典实现中）
 
 ## 互斥锁
 
-## 读写锁
+## 文件锁
 
 # 内存布局
 
@@ -2233,6 +2400,18 @@ CPU一次能够处理的二进制的位数。
 
 ![共享内核空间](img/Linux/user-kernal-space.png)
 
+### 多级页表寻址
+
+32bit Linux采用了3级页表$[PGD(16b)|PMD(4b)|PTE(4b)|Offset(12b)]$。
+
+![Linux的三级页表](img/Linux/layer3-page.PNG)
+
+![三级页表寻址过程](img/Linux/get-address.PNG)
+
+64bit采用了4级页表$[PG_{lobal}D|PU_{pper}D|PM_{iddle}D|PTE|Offset]$。
+
+![四级页表](img/Linux/four-layer-pte.png)
+
 ## [内核空间布局](https://blog.csdn.net/qq_38410730/article/details/81105132)
 
 内核为了能够访问所有的物理地址空间，就要**将全部物理地址空间映射到的内核线性空间**中。于是内核将0~896M的物理地址空间**一对一映射**到自己的线性地址空间（对应`ZONE_DMA`和`ZONE_NORMAL`区域）中，这样它便可以随时访问里的物理页面。而由于内核的虚拟地址空间的限制，内核按照常规的映射方式不能访问到896MB之后的全部物理地址空间（即**`ZONE_HIGHMEM`**区域），在32位Linux下，内核采取了**动态映射**的方法，即按需的将`ZONE_HIGHMEM`里的物理页面映射到内核地址空间的最后128M线性地址空间里，使用完之后释放映射关系，循环使用这128M线性地址空间以映射到其他所有物理页面。[来源](https://blog.csdn.net/ibless/article/details/81545359) [来源](https://blog.csdn.net/farmwang/article/details/66976818?utm_source=debugrun&utm_medium=referral)
@@ -2286,7 +2465,7 @@ CPU一次能够处理的二进制的位数。
 |    栈    | 局部变量、函数参数与返回值、函数返回地址、调用者环境信息（如寄存器值） |   静态   | 和堆共享上限、**可设置** |  用户  |
 | 内核空间 |      储操作系统、驱动程序、**命令行参数和环境变量**等……      |  动+静   |           定长           |  内核  |
 
-![程序段分布](img/Linux/segments-layout.jpg)
+![程序段分布](img/Linux/segments-layout.png)
 
 Linux通过将每个段的起始地址赋予一个随机偏移量**`random offset`**来打乱内存布局（否则进程内存布局缺乏变化，容易被试探出内存布局）以加强安全性。
 
@@ -2434,7 +2613,7 @@ struct swap_extent {//用于为swapfile的slot和磁盘地址建立映射
 };
 ```
 
-![swapfile的组织](img/Linux/swap-extern.jpg)
+![swapfile的组织](img/Linux/swap-extern.png)
 
 ## 物理页管理
 
@@ -2557,3 +2736,5 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 [Windows内存布局和不同架构的内存访问](https://www.eefocus.com/mcu-dsp/400488)
 
 [服务器体系(SMP, NUMA, MPP)与共享存储器架构(UMA和NUMA)](https://www.cnblogs.com/linhaostudy/p/9980383.html)
+
+[谢宝友：深入理解 RCU系列](https://cloud.tencent.com/developer/article/1006339)
