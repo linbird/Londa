@@ -42,35 +42,14 @@ cat /proc/filesystems #查看系统支持的文件系统
 
 ```c
 struct file_system_type{ // 每种受支持的文件系统（即使无实例）一个该对象
-    const char              *name;     /* filesystem’s name */
-    int                     fs_flags;  /* filesystem type flags */
-    struct super_block      *(*get_sb) (struct file_system_type *, int, char *, void *);//在文件系统加载的时候读取磁盘上的superblock，并使用读入的数据填充内存中的superblock对象。
-    void                    (*kill_sb) (struct super_block *);
-    struct module           *owner;    /* module owning the filesystem */
+    const char *name; //文件系统的名称
+    int fs_flags; //文件系统类型
+    struct super_block *(*get_sb) (struct file_system_type *, int, char *, void *);//在文件系统加载的时候读取磁盘上的superblock，并使用读入的数据填充内存中的superblock对象。
+    void (*kill_sb) (struct super_block *);
+    struct module *owner; /* module owning the filesystem */
     struct file_system_type *next;//下一个file_system_type，所有文件系统类型file_system_type链表管理
-    struct list_head        fs_supers; /* list of superblock objects */
-    struct lock_class_key   s_lock_key;
-    struct lock_class_key   s_umount_key;
-    struct lock_class_key   i_lock_key;
-    struct lock_class_key   i_mutex_key;
-    struct lock_class_key   i_mutex_dir_key;
-    struct lock_class_key   i_alloc_sem_key;
+    struct list_head fs_supers;//该文件系统的所有超级块实例链表
 };
-
-struct fs_struct {//存储和进程相关的文件系统信息,进程描述符中的fs指针指向本结构体
-	int users;
-	spinlock_t lock;
-	seqcount_t seq;
-	int umask;
-	int in_exec;
-	struct path root, pwd;//进程的根目录和当前目录
-}
-// inlcude/linux/path.h
-struct path {
-	// ...
-	struct vfsmount *mnt;
-	struct dentry *dentry;
-}
 ```
 
 #### 挂载点
@@ -88,48 +67,48 @@ struct vfsmount {//表示一个具体的文件系统实例，在文件系统挂�
 
 ```c
 struct super_block{
-    struct list_head        s_list;//将所有的文件块对象组织成为链表
-    dev_t                   s_dev;//文件系统对应的设备标识符
-    unsigned long           s_blocksize;      /* block size in bytes */
-    unsigned char           s_blocksize_bits; /* block size in bits */
-    unsigned char           s_dirt;           /* dirty flag */
-    unsigned long long      s_maxbytes;       /* max file size */
-    struct file_system_type s_type;           /* filesystem type */
+    struct list_head s_list;//将所有的文件块对象组织成为链表
+    dev_t s_dev;//文件系统对应的设备标识符
+    unsigned long s_blocksize; /* block size in bytes */
+    unsigned char s_blocksize_bits; /* block size in bits */
+    unsigned char s_dirt; /* dirty flag */
+    unsigned long long s_maxbytes;/* max file size */
+    struct file_system_type s_type; /* filesystem type */
     struct super_operations s_op;//superlbock对象支持的函数操作集合（不含创建、删除）
-    struct dquot_operations *dq_op;           /* quota methods */
-    struct quotactl_ops     *s_qcop;          /* quota control methods */
-    struct export_operations *s_export_op;    /* export methods */
-    unsigned long            s_flags;         /* mount flags */
-    unsigned long            s_magic;         /* filesystem’s magic number */
-    struct dentry            *s_root;         /* directory mount point */
-    struct rw_semaphore      s_umount;        /* unmount semaphore */
-    struct semaphore         s_lock;          /* superblock semaphore */
-    int                      s_count;         /* superblock ref count */
-    int                      s_need_sync;     /* not-yet-synced flag */
-    atomic_t                 s_active;        /* active reference count */
-    void                     *s_security;     /* security module */
-    struct xattr_handler  **s_xattr;  /* extended attribute handlers */
-    struct list_head      s_inodes;        /* list of inodes */
-    struct list_head      s_dirty;         /* list of dirty inodes */
-    struct list_head      s_io;            /* list of writebacks */
-    struct list_head      s_more_io;       /* list of more writeback */
-    struct hlist_head     s_anon;          /* anonymous dentries */
-    struct list_head      s_files;         /* list of assigned files */
-    struct list_head      s_dentry_lru;    /* list of unused dentries */
-    int                   s_nr_dentry_unused; /* number of dentries on list */
-    struct block_device   *s_bdev;         /* associated block device */
-    struct mtd_info       *s_mtd;          /* memory disk information */
-    struct list_head      s_instances;     /* instances of this fs */
-    struct quota_info     s_dquot;         /* quota-specific options */
-    int                   s_frozen;        /* frozen status */
-    wait_queue_head_t     s_wait_unfrozen; /* wait queue on freeze */
-    char                  s_id[32];        /* text name */
-    void                  *s_fs_info;      /* filesystem-specific info */
-    fmode_t               s_mode;          /* mount permissions */
-    struct semaphore      s_vfs_rename_sem; /* rename semaphore */
-    u32                   s_time_gran;     /* granularity of timestamps */
-    char                  *s_subtype;      /* subtype name */
-    char                  *s_options;      /* saved mount options */
+    struct dquot_operations *dq_op; /* quota methods */
+    struct quotactl_ops *s_qcop;/* quota control methods */
+    struct export_operations *s_export_op;/* export methods */
+    unsigned long s_flags;/* mount flags */
+    unsigned long s_magic;/* filesystem’s magic number */
+    struct dentry *s_root;/* directory mount point */
+    struct rw_semaphore s_umount;/* unmount semaphore */
+    struct semaphore s_lock;/* superblock semaphore */
+    int s_count;/* superblock ref count */
+    int s_need_sync;/* not-yet-synced flag */
+    atomic_t s_active;/* active reference count */
+    void *s_security;/* security module */
+    struct xattr_handler  **s_xattr;/* extended attribute handlers */
+    struct list_head s_inodes;/* list of inodes */
+    struct list_head s_dirty;/* list of dirty inodes */
+    struct list_head s_io;/* list of writebacks */
+    struct list_head s_more_io;/* list of more writeback */
+    struct hlist_head s_anon;/* anonymous dentries */
+    struct list_head s_files;/* list of assigned files */
+    struct list_head s_dentry_lru;/* list of unused dentries */
+    int s_nr_dentry_unused; /* number of dentries on list */
+    struct block_device *s_bdev;/* associated block device */
+    struct mtd_info *s_mtd;/* memory disk information */
+    struct list_head s_instances;/* instances of this fs */
+    struct quota_info s_dquot;/* quota-specific options */
+    int s_frozen;/* frozen status */
+    wait_queue_head_t s_wait_unfrozen; /* wait queue on freeze */
+    char s_id[32];/* text name */
+    void *s_fs_info;/* filesystem-specific info */
+    fmode_t s_mode;/* mount permissions */
+    struct semaphore s_vfs_rename_sem; /* rename semaphore */
+    u32 s_time_gran;/* granularity of timestamps */
+    char *s_subtype;/* subtype name */
+    char *s_options;/* saved mount options */
 };
 
 struct super_operations {//对文件系统和它的inode执行low-level operations.
@@ -142,7 +121,7 @@ struct super_operations {//对文件系统和它的inode执行low-level operatio
 };
 ```
 
-
+![文件系统类型变量与超级块的联系](/home/linbird/Londa/img/Linux/filesystem-superblock.bmp)
 
 ### 目录项对象`dentry`
 
@@ -238,45 +217,26 @@ struct dentry_operations {
 
 ~~`dentry`存储在`cache`中导致对应的`inode`的使用计数大于。因此只要`dentry`被`cache`，对应的`inode`就一定也被`cache`了（使用的是inode cache，即icache），所以当路径查找函数在`dentry cache`中命中时，其对应的`inode`一定也在内存中。~~https://www.huliujia.com/blog/81d31574c9a0088e8ae0c304020b4b1c4f6b8fb9/
 
+![dentry与inode之间的联系](/home/linbird/Londa/img/Linux/dentry-inode.png)
+
 ### 文件对象
 
 文件对象是**已打开的文件**在内存中的表示，主要用于建立进程和磁盘上的文件的对应关系。文件对象和物理文件的关系类型进程和程序的关系，文件对象仅仅在进程观点上代表已经打开的文件。**一个文件对应的文件对象可能不是惟一的**，但是其对应的索引节点和目录项对象是惟一的。系统的所有已打开的文件信息将被内核用一张系统级的**已打开文件表**组织起来。
 
 #### 已打开文件表
 
-```c
-struct files_struct{//内核假定绝大多数进程打开的文件数不会超过NR_OPEN_DEFAULT=64个
-    atomic_t               count;              /* usage count */
-    struct fdtable         *fdt;               /* pointer to other fd table */
-    struct fdtable         fdtab;              /* base fd table */
-    spinlock_t             file_lock;          /* per-file lock */
-    int  next_fd;  /* cache of next available fd */
-    struct embedded_fd_set close_on_exec_init; /* list of close-on-exec fds */
-    struct embedded_fd_set open_fds_init       /* list of open fds */
-    struct file            *fd_array[NR_OPEN_DEFAULT]; //指向一个 file 结构的数组
-};
-
-struct fdtable{
-	unsigned int max_fds;//本结构的数组的大小
-	struct file __rcu **fd;//指向全局打开文件表
-	fd_set *close_on_exec;//位图，用来记录那些fd需要close_on_exec
-	fd_set *open_fds;//位图，用来记录那些fd已经在用，那些还处于free状态
-	struct rcu_head rcu;
-	struct fdtable *next;
-};
-```
-fd_array指向一个已打开文件的列表。fd_array[i]指向文件描述符为i的file对象。NR_OPEN_DEFAULT是一个常数，在64bit机器中是64.当打开的文件数超过这个常数值时，内核会创建一个新的fdtable，并使fdt指向这个新的fdtable结构体。
 #### 已打开文件
 
 ```c
 struct file {//已打开文件
-	struct pathf_path;
+	struct path f_path;//该文件对应的struct path
 	struct inode *f_inode;//文件对应的缓存在内存中的inode
-	struct mutex f_pos_lock;//
+    atomic_long_t f_count;//使用该文件的进程数
 	const struct file_operations f_op;//文件支持的操作集合
 	unsigned int f_flags;//文件打开标志
 	fmode_t f_mode;//文件读写权限
-	loff_t f_pos;//文件的偏移量
+	struct mutex f_pos_lock;//
+	loff_t f_pos;//文件的当前位置
 	// ...其他数据成员
 }
 
@@ -305,9 +265,9 @@ struct inode {
 	blkcnt_t i_blocks; // 文件大小，块数
 	struct timespec64 i_atime, i_mtime, i_ctime;//上次打开、修改、创建时间
 	union{//和特殊文件相关的共用体域
-        struct pipe_inode_info  *i_pipe;         /* pipe information */
-        struct block_device     *i_bdev;         /* block device driver */
-        struct cdev             *i_cdev;         /* character device driver */
+        struct pipe_inode_info  *i_pipe; /* pipe information */
+        struct block_device *i_bdev; /* block device driver */
+        struct cdev *i_cdev; /* character device driver */
     };
     //其他数据成员
 }
@@ -323,7 +283,7 @@ struct inode_operations {
 };
 ```
 
-
+![超级块与inode节点之间的联系](/home/linbird/Londa/img/Linux/superblock-inode.png)
 
 ![几个结构的关系](img/Linux/relation.png)
 
@@ -333,6 +293,88 @@ struct inode_operations {
 2. 每一个文件系统的实例都对应有一个超级块和安装点，超级块通过它的一个域s_type指向其对应的具体的文件系统类型`file_system_type`。
 
 ## 进程与VFS
+
+### 数据结构
+
+#### 进程`task_struct`
+
+```c
+struct task_struct {
+    volatile long state; /* -1 unrunnable, 0 runnable, >0 stopped */
+    void *stack;//
+    pid_t pid;//进程id
+    pid_t tgid;//线程组id
+    #ifdef CONFIG_CC_STACKPROTECTOR
+    /* Canary value for the -fstack-protector gcc feature */
+    	unsigned long stack_canary;
+    #endif
+    struct list_head thread_group;//线程组链表
+    struct completion *vfork_done; //* for vfork() */
+    int __user *set_child_tid; //* CLONE_CHILD_SETTID */
+    int __user *clear_child_tid; //* CLONE_CHILD_CLEARTID */
+    cputime_t utime, stime, utimescaled, stimescaled;
+    cputime_t gtime;
+    /* filesystem information */
+    struct fs_struct *fs;//启动该进程的用户文件系统相关,chdir、chroot可修改此变量
+    struct files_struct *files;//进程拥有的文件描述符表
+    struct nsproxy *nsproxy;//进程namespce隔离
+};
+```
+
+#### 进程目录信息
+
+```c
+struct fs_struct {//存储和进程相关的文件系统信息
+	int users;//本实例被进程引用的次数
+	spinlock_t lock;
+	seqcount_t seq;
+	int umask;//创建文件时的默认文件掩码
+	int in_exec;
+	struct path root, pwd;//进程的根目录和当前目录
+}
+
+struct path {
+	struct vfsmount *mnt;//所属的挂载点
+	struct dentry *dentry;//目录项
+	// ...其他数据成员
+}
+```
+
+#### 进程文件描述符表
+
+```c
+struct files_struct{//内核假定绝大多数进程打开的文件数不会超过NR_OPEN_DEFAULT=64个
+    atomic_t count;//引用计数
+    struct fdtable *fdt;//指向扩展的fdtable(当打开多余NR_OPEN_DEFAULT时才有效)
+    struct fdtable fdtab;//基本的fdtable
+    spinlock_t file_lock;/* per-file lock */
+    int next_fd;//下一个可用文件描述符
+    struct embedded_fd_set close_on_exec_init; //默认的close-on-exec的文件描述符位图
+    struct embedded_fd_set open_fds_init//默认的已打开的文件描述符位图
+    struct file *fd_array[NR_OPEN_DEFAULT]; //指向一个file结构的数组,fd_array[i]指向文件描述符为i的file对象。
+};
+
+struct fdtable{//预先分配的fdtable
+	unsigned int max_fds;//本结构的数组的大小
+	struct file __rcu **fd;//指向进程的打开文件表
+	fd_set *close_on_exec;//位图，用来记录那些fd需要close_on_exec
+	fd_set *open_fds;//位图，用来记录那些fd已经在用，那些还处于free状态
+	struct rcu_head rcu;
+	struct fdtable *next;//下一个fdtable
+};
+```
+
+对于64位系统，内核假定绝大多数进程打开的文件数不会超过64个，因此`fork`创建进程的时候，就已经预先分配了可能需要的`fdtable`，以及两个长度为64的位图。其分配情况如下图,其中绿色部分为展开后的`fdtable`,其实际有效数据存储在`files_struct`中.
+
+![默认情况下的files_struct](/home/linbird/Londa/img/Linux/default-files_struct.png)
+
+如果进程打开的文件超过了64，那么就不得不`expand_fdtable()`分配一个更大的能够容纳更多`struct file`指针的`fdtable`,然后将老的`fdtab`中数据拷贝到新的`fdtable`。
+
+![扩展后的fdtable](/home/linbird/Londa/img/Linux/alloc_fdtable.png)
+
+fd_arrayNR_OPEN_DEFAULT是一个常数，在64bit机器中是64.当打开的文件数超过这个常数值时，内核会创建一个新的fdtable，并使fdt指向这个新的fdtable结构体。
+
+
 
 进程使用`files_struct`, `fs_struct` 和`mnt_namesapce`这三个数据结构来将进程和`VFS`层关联起来，记录已打开文件列表、进程的根文件系统、当前工作目录等信息。
 
@@ -3174,6 +3216,10 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 
 [linux内核数据结构学习总结](https://www.cnblogs.com/LittleHann/p/3865490.html)
 
+[LINUX VFS分析之三 进程描述符与文件系统相关参数的关联](https://blog.csdn.net/lickylin/article/details/100863941)
+
+
+
 
 
 被遗忘的桃源——flock 文件锁 - 知乎
@@ -3184,9 +3230,6 @@ https://www.eet-china.com/mp/a38145.html
 
 VFS中的file，dentry和inode
 https://bean-li.github.io/vfs-inode-dentry/
-
-LINUX VFS分析之三 进程描述符与文件系统相关参数的关联_lickylin的专栏-CSDN博客
-https://blog.csdn.net/lickylin/article/details/100863941
 
 Linux VFS虚拟文件系统初探
 https://www.sunxiaokong.xyz/2019-12-02/lzx-01-babyVFS/
@@ -3205,3 +3248,4 @@ https://chrome.google.com/webstore/detail/calmly-writer/adhdlhedoenicbbncfckobje
 
 ShiftEdit
 https://shiftedit.net/home#
+
