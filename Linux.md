@@ -26,7 +26,13 @@
 
 ## 数据结构
 
+每个单独的文件系统分别为自己所管理的文件系统提供相应的控制结构，组织自己所管理的所有文件。
+
+![单个文件系统的组织](./img/Linux/tradictional-layout.png)
+
 VFS主要通过四个主要的结构体实现抽象层，每个结构体包含了指向该结构体支持的方法列表的指针。[更详细的说明](https://www.huliujia.com/blog/81d31574c9a0088e8ae0c304020b4b1c4f6b8fb9/)
+
+![几个结构的关系](img/Linux/relation.png)
 
 ![VFS中超级块、挂载点以及文件系统的关系](./img/Linux/vfs.jpg)
 
@@ -69,46 +75,24 @@ struct vfsmount {//表示一个具体的文件系统实例，在文件系统挂�
 struct super_block{
     struct list_head s_list;//将所有的文件块对象组织成为链表
     dev_t s_dev;//文件系统对应的设备标识符
-    unsigned long s_blocksize; /* block size in bytes */
-    unsigned char s_blocksize_bits; /* block size in bits */
+    unsigned long s_blocksize;//文件系统中数据块大小，以字节为单位
+    unsigned char s_blocksize_bits;//文件系统中数据块大小，以位为单位
     unsigned char s_dirt; /* dirty flag */
-    unsigned long long s_maxbytes;/* max file size */
-    struct file_system_type s_type; /* filesystem type */
+    unsigned long long s_maxbytes;//允许的最大的文件大小(字节数)
+    struct file_system_type s_type;//文件系统类型(ext2,ext4)
     struct super_operations s_op;//superlbock对象支持的函数操作集合（不含创建、删除）
-    struct dquot_operations *dq_op; /* quota methods */
-    struct quotactl_ops *s_qcop;/* quota control methods */
-    struct export_operations *s_export_op;/* export methods */
-    unsigned long s_flags;/* mount flags */
-    unsigned long s_magic;/* filesystem’s magic number */
-    struct dentry *s_root;/* directory mount point */
-    struct rw_semaphore s_umount;/* unmount semaphore */
-    struct semaphore s_lock;/* superblock semaphore */
-    int s_count;/* superblock ref count */
-    int s_need_sync;/* not-yet-synced flag */
-    atomic_t s_active;/* active reference count */
-    void *s_security;/* security module */
-    struct xattr_handler  **s_xattr;/* extended attribute handlers */
-    struct list_head s_inodes;/* list of inodes */
-    struct list_head s_dirty;/* list of dirty inodes */
-    struct list_head s_io;/* list of writebacks */
-    struct list_head s_more_io;/* list of more writeback */
-    struct hlist_head s_anon;/* anonymous dentries */
-    struct list_head s_files;/* list of assigned files */
-    struct list_head s_dentry_lru;/* list of unused dentries */
-    int s_nr_dentry_unused; /* number of dentries on list */
-    struct block_device *s_bdev;/* associated block device */
-    struct mtd_info *s_mtd;/* memory disk information */
+    struct dquot_operations *dq_op;//指向某个特定的具体文件系统用于限额操作的函数集合
+    struct quotactl_ops *s_qcop;//用于配置磁盘限额的的方法，处理来自用户空间的请求
+    unsigned long s_magic//区别于其他文件系统的标识
+    struct dentry *s_root;//指向该具体文件系统安装目录的目录项
+    struct rw_semaphore s_umount;//对超级块读写时进行同步
+    int s_count;//对超级块的使用计数
+    atomic_t s_active;//引用计数
+    struct list_head s_inodes;//管理的所有inode链表
+    struct list_head s_dirty;//已经脏的inode链表
+    struct list_head s_io;//需要回写的inode
     struct list_head s_instances;/* instances of this fs */
-    struct quota_info s_dquot;/* quota-specific options */
-    int s_frozen;/* frozen status */
-    wait_queue_head_t s_wait_unfrozen; /* wait queue on freeze */
     char s_id[32];/* text name */
-    void *s_fs_info;/* filesystem-specific info */
-    fmode_t s_mode;/* mount permissions */
-    struct semaphore s_vfs_rename_sem; /* rename semaphore */
-    u32 s_time_gran;/* granularity of timestamps */
-    char *s_subtype;/* subtype name */
-    char *s_options;/* saved mount options */
 };
 
 struct super_operations {//对文件系统和它的inode执行low-level operations.
@@ -121,7 +105,7 @@ struct super_operations {//对文件系统和它的inode执行low-level operatio
 };
 ```
 
-![文件系统类型变量与超级块的联系](/home/linbird/Londa/img/Linux/filesystem-superblock.bmp)
+![文件系统类型变量与超级块的联系](./img/Linux/filesystem-superblock.bmp)
 
 ### 目录项对象`dentry`
 
@@ -151,58 +135,17 @@ struct qstr {//quick string
 	};
 	const unsigned char *name;//文件名(不含路径)
 };
-struct dentry
-{
-    atomic_t                 d_count;      /* usage count */
-    unsigned int             d_flags;      /* dentry flags */
-    spinlock_t               d_lock;       /* per-dentry lock */
-    int                      d_mounted;    /* is this a mount point? */
-    struct inode             *d_inode;     /* associated inode */
-    struct hlist_node        d_hash;       /* list of hash table entries */
-    struct dentry            *d_parent;    /* dentry object of parent */
-    struct qstr              d_name;       /* dentry name */
-    struct list_head         d_lru;        /* unused list */
-    union{
-        struct list_head     d_child;      /* list of dentries within */
-        struct rcu_head      d_rcu;        /* RCU locking */
-    } d_u;
-    struct list_head         d_subdirs;    /* subdirectories */
-    struct list_head         d_alias;  /* list of alias inodes */
-    unsigned long            d_time;       /* revalidate time */
-    struct dentry_operations *d_op;        /* dentry operations table */
-    struct super_block       *d_sb;        /* superblock of file */
-    void                     *d_fsdata;    /* filesystem-specific data */
-    unsigned char            d_iname[DNAME_INLINE_LEN_MIN]; /* short name */
-};
-
 
 struct dentry {//directory entry
-	/* RCU lookup touched fields */
-	unsigned int d_flags;		/* protected by d_lock */
-	seqcount_t d_seq;		/* per dentry seqlock */
-	struct hlist_bl_node d_hash;	/* lookup hash list */
 	struct dentry *d_parent;//父目录
-	struct qstr d_name;
-	struct inode *d_inode;		/* Where the name belongs to - NULL is* negative */
-	unsigned char d_iname[DNAME_INLINE_LEN];	/* small names */
-
-	/* Ref lookup also touches following */
-	struct lockref d_lockref;	/* per-dentry lock and refcount */
-	const struct dentry_operations *d_op;
-	struct super_block *d_sb;	/* The root of the dentry tree */
-	unsigned long d_time;		/* used by d_revalidate */
-	void *d_fsdata;			/* fs-specific data */
-
-	struct list_head d_lru;		/* LRU list */
-	struct list_head d_child;	/* child of parent list */
+	struct qstr d_name;//文件全名
+	struct inode *d_inode;//与该目录项关联的inode
+	unsigned char d_iname[DNAME_INLINE_LEN];//文件缩略名
+	const struct dentry_operations *d_op;//此目录项支持的操作
+	struct super_block *d_sb;//这个目录项所属的文件系统的超级块(目录项树的根)
+	void *d_fsdata;//具体文件系统的数据
 	struct list_head d_subdirs;//子目录链表
-	/*
-	 * d_alias and d_rcu can share memory
-	 */
-	union {
-		struct hlist_node d_alias;	/* inode alias list */
-	 	struct rcu_head d_rcu;
-	} d_u;
+	//... 其他数据成员
 };
 
 struct dentry_operations {
@@ -215,15 +158,13 @@ struct dentry_operations {
 
 #### dentry cache
 
-~~`dentry`存储在`cache`中导致对应的`inode`的使用计数大于。因此只要`dentry`被`cache`，对应的`inode`就一定也被`cache`了（使用的是inode cache，即icache），所以当路径查找函数在`dentry cache`中命中时，其对应的`inode`一定也在内存中。~~https://www.huliujia.com/blog/81d31574c9a0088e8ae0c304020b4b1c4f6b8fb9/
+`dentry`存储在`cache`中导致对应的`inode`的使用计数大于1。因此只要**有效`dentry`**被`cache`，对应的`inode`就一定也被cache到了内存之中。
 
-![dentry与inode之间的联系](/home/linbird/Londa/img/Linux/dentry-inode.png)
+![dentry与inode之间的联系](./img/Linux/dentry-inode.png)
 
 ### 文件对象
 
 文件对象是**已打开的文件**在内存中的表示，主要用于建立进程和磁盘上的文件的对应关系。文件对象和物理文件的关系类型进程和程序的关系，文件对象仅仅在进程观点上代表已经打开的文件。**一个文件对应的文件对象可能不是惟一的**，但是其对应的索引节点和目录项对象是惟一的。系统的所有已打开的文件信息将被内核用一张系统级的**已打开文件表**组织起来。
-
-#### 已打开文件表
 
 #### 已打开文件
 
@@ -231,16 +172,17 @@ struct dentry_operations {
 struct file {//已打开文件
 	struct path f_path;//该文件对应的struct path
 	struct inode *f_inode;//文件对应的缓存在内存中的inode
-    atomic_long_t f_count;//使用该文件的进程数
+    atomic_long_t f_count;//使用该文件的进程数、即引用计数（为0才删除）
 	const struct file_operations f_op;//文件支持的操作集合
 	unsigned int f_flags;//文件打开标志
 	fmode_t f_mode;//文件读写权限
 	struct mutex f_pos_lock;//
 	loff_t f_pos;//文件的当前位置
+    struct address_space *f_mapping;//文件的页缓存映射
 	// ...其他数据成员
 }
 
-struct file_operations {
+struct file_operations {//一系列函数指针的集合
 	struct module *owner;
 	loff_t (*llseek) (struct file *, loff_t, int);
 	ssize_t (*read) (struct file *, char __user *, size_t, loff_t *);
@@ -249,13 +191,34 @@ struct file_operations {
 };
 ```
 
-**`file_operations`**：一系列函数指针的集合，其中包含所有可以使用的系统调用函数（例如`open、read、write、mmap`等）。每个打开文件（打开文件列表模块的一个表项）都可以连接到`file_operations`模块，从而对任何已打开的文件，通过系统调用函数，实现各种操作。
+#### 已打开文件表
+
+所有`file`结构形成一个双链表，称为系统打开文件表。
+
+#### 文件缓存
+
+```c
+struct address_space { //对应一个已缓存文件，管理着若干个页
+    struct inode *host;//该结构所属的indee或者block_device
+    unsigned long nrpages;//该文件占用的内存页数量
+    spinlock_t tree_lock;//保护page_tree
+    struct radix_tree_root page_tree;//指向管理所有属于本结构的物理页面的基数树根节点
+    struct spinlock_t i_mmap_lock;//保护immap
+    struct prio_tree_root i_mmap;//管理address_space所属文件的多个VMAs映射 
+    struct address_space_operations *a_ops;//该文件支持的所有操作函数表
+    //其他数据成员
+}
+```
 
 **`address_space`**：一个`struct address_space`管理表示了一个文件在**所有已缓存物理页**。它是页缓存和外部设备中文件系统的桥梁，**关联了内存系统和文件系统**。
 
 ### 索引节点对象 inode
 
-存储了文件的相关信息，代表了存储设备上的一个实际的**物理文件**。当一个文件被访问时，内核会在内存中组装相应的索引节点对象，以便向内核提供对一个文件进行操作时所必需的全部信息（这些信息一部分存储在磁盘特定位置，另外一部分是在加载时动态填充的）。没有`inode`的**匿名文件**则需要根据磁盘上的数据动态生成`inode`的信息，并将这些信息填入内存中的`inode`对象
+存储了文件的元数据（文件大小，设备标识符，用户标识符，用户组标识符，文件模式，扩展属性，文件读取或修改的时间戳，链接数量，指向存储该内容的磁盘区块的指针，文件分类等等），代表了存储设备上的一个实际的**物理文件**。当一个文件被访问时，内核会在内存中组装相应的索引节点对象，以便向内核提供对一个文件进行操作时所必需的全部信息（这些信息一部分存储在磁盘特定位置，另外一部分是在加载时动态填充的）。没有`inode`的**匿名文件**则需要根据磁盘上的数据动态生成`inode`的信息，并将这些信息填入内存中的`inode`对象。文件系统内部依靠`inode`来索引文件。
+
+#### inode的产生
+
+`inode`节点的大小一般是128字节或256字节，每个节点管理2KB的空间（一般文件系统中很少有文件小于2KB的，所以预定按照2KB分），节点总数在格式化时就给定(现代OS可以动态变化)。`inode`有两种，一种是VFS的`inode`，一种是具体文件系统的`inode`。前者在内存中，后者在磁盘中。所以每次其实是将磁盘中的`inode`调进填充内存中的`inode`，这样才是算使用了磁盘文件`inode`。[来源](https://www.eet-china.com/mp/a38145.html)
 
 ```c
 struct inode {
@@ -283,9 +246,7 @@ struct inode_operations {
 };
 ```
 
-![超级块与inode节点之间的联系](/home/linbird/Londa/img/Linux/superblock-inode.png)
-
-![几个结构的关系](img/Linux/relation.png)
+![超级块与inode节点之间的联系](./img/Linux/superblock-inode.png)
 
 ### NOTE
 
@@ -340,7 +301,7 @@ struct path {
 }
 ```
 
-#### 进程文件描述符表
+#### 进程打开文件表
 
 ```c
 struct files_struct{//内核假定绝大多数进程打开的文件数不会超过NR_OPEN_DEFAULT=64个
@@ -366,30 +327,13 @@ struct fdtable{//预先分配的fdtable
 
 对于64位系统，内核假定绝大多数进程打开的文件数不会超过64个，因此`fork`创建进程的时候，就已经预先分配了可能需要的`fdtable`，以及两个长度为64的位图。其分配情况如下图,其中绿色部分为展开后的`fdtable`,其实际有效数据存储在`files_struct`中.
 
-![默认情况下的files_struct](/home/linbird/Londa/img/Linux/default-files_struct.png)
+![默认情况下的files_struct](./img/Linux/default-files_struct.png)
 
 如果进程打开的文件超过了64，那么就不得不`expand_fdtable()`分配一个更大的能够容纳更多`struct file`指针的`fdtable`,然后将老的`fdtab`中数据拷贝到新的`fdtable`。
 
-![扩展后的fdtable](/home/linbird/Londa/img/Linux/alloc_fdtable.png)
-
-fd_arrayNR_OPEN_DEFAULT是一个常数，在64bit机器中是64.当打开的文件数超过这个常数值时，内核会创建一个新的fdtable，并使fdt指向这个新的fdtable结构体。
-
-
+![扩展后的fdtable](./img/Linux/alloc_fdtable.png)
 
 进程使用`files_struct`, `fs_struct` 和`mnt_namesapce`这三个数据结构来将进程和`VFS`层关联起来，记录已打开文件列表、进程的根文件系统、当前工作目录等信息。
-
-```c
-struct address_space { //对应一个已缓存文件，管理着若干个页
-    struct inode *host;//该结构所属的indee或者block_device
-    unsigned long nrpages;//该文件占用的内存页数量
-    spinlock_t tree_lock;//保护page_tree
-    struct radix_tree_root page_tree;//指向管理所有属于本结构的物理页面的基数树根节点
-    struct spinlock_t i_mmap_lock;//保护immap
-    struct prio_tree_root i_mmap;//管理address_space所属文件的多个VMAs映射 
-    struct address_space_operations *a_ops;//该文件支持的所有操作函数表
-    //其他数据成员
-}
-```
 
 ![task_struct、fs_struct、files_struct、fdtable、file的关系](img/Linux/task-fs-file-fdtable.png)
 
@@ -435,6 +379,16 @@ struct address_space { //对应一个已缓存文件，管理着若干个页
 | `sysfs(≥2.6)` |  实际连接到系统上的设备和总线  |           实现和内核的交互           |
 
 **`sockfs`**：`socketfs`伪文件系统被编译进内核（而非一个模块）在系统运行期间**总是被装载**着的（因为要支持整个TCP/IP协议栈）。它实现了VFS中的4种主要对象：超级块`super block`、索引节点`inode`、目录项对象`dentry`和文件对象`file`，当执行文件IO系统调用时，VFS就将请求转发给`sockfs`，而`sockfs`就调用具体的协议实现。
+
+## VFS与FS
+
+### inode&dentry
+
+VFS文件系统中的inode和dentry与实际文件系统的inode和dentry有一定的关系，但不能等同。真实磁盘文件的inode和dentry是存在于物理外存上的，但VFS中的inode和dentry是存在于内存中的，系统读取外存中的inode和dentry信息进行一定加工后，生成内存中的inode和dentry。虚拟的文件系统也具有inode和dentry结构，只是这是系统根据相应的规则生成的，不存在于实际外存中。
+
+### FS与磁盘
+
+![磁盘与文件系统](./img/Linux/disk-fs.png)
 
 # 任务调度
 
@@ -1173,7 +1127,7 @@ int pthread_kill(pthread_t thread, int sig);//向同一个进程内的线程发�
 
 union sigval {
     int   sival_int;
-	void *sival_ptr;
+    void *sival_ptr;
 };
 int sigqueue(pid_t pid, int sig, const union sigval value);//新的向进程发送信号的系统调用,主要针对实时信号提出、支持信号带有参数,
 //@Parameters
@@ -3218,15 +3172,12 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 
 [LINUX VFS分析之三 进程描述符与文件系统相关参数的关联](https://blog.csdn.net/lickylin/article/details/100863941)
 
-
+[Linux 虚拟文件系统四大对象：超级块、inode、dentry、file之间关系](https://www.eet-china.com/mp/a38145.html)
 
 
 
 被遗忘的桃源——flock 文件锁 - 知乎
 https://zhuanlan.zhihu.com/p/25134841
-
-Linux 虚拟文件系统四大对象：超级块、inode、dentry、file之间关系-面包板社区
-https://www.eet-china.com/mp/a38145.html
 
 VFS中的file，dentry和inode
 https://bean-li.github.io/vfs-inode-dentry/
@@ -3239,12 +3190,6 @@ https://www.google.com/search?client=firefox-b-d&q=Dentry+Cache
 
 linux内核数据结构学习总结 - 郑瀚Andrew.Hann - 博客园
 https://www.cnblogs.com/LittleHann/p/3865490.html
-
-马克飞象 - Chrome 网上应用店
-https://chrome.google.com/webstore/detail/marxico/kidnkfckhbdkfgbicccmdggmpgogehop?hl=zh-CN
-
-Calmly Writer - Chrome 网上应用店
-https://chrome.google.com/webstore/detail/calmly-writer/adhdlhedoenicbbncfckobjedmboleig
 
 ShiftEdit
 https://shiftedit.net/home#
