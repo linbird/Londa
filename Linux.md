@@ -243,6 +243,7 @@ struct inode {//文件的惟一标识符，文件名可以更改但inode号锁�
     };
     struct list_head i_lru;//全局LRU链表，保存所有unused的inode	
 	unsigned long i_state;
+    struct file_lock *i_flock;//文件锁
     //...其他数据成员
 }
 
@@ -2541,9 +2542,11 @@ lslocks#查看当前系统中的文件锁使用情况
 
 ### 实现
 
-#### [实现原理](https://sjt157.top/2019/01/17/%E6%96%87%E4%BB%B6%E9%94%81/)
+#### [文件锁](https://sjt157.top/2019/01/17/%E6%96%87%E4%BB%B6%E9%94%81/)
 
-每当创建一把文件锁的时候，系统就会实例化一个**`struct file_lock`**对象（记录锁的类型（共享锁，独占锁）、拥有这把锁的进程号、锁的标识（租赁锁，阻塞锁，POSIX锁，FLOCK锁）等）。最后把这个`file_lock`对象插入到被锁文件的**`inode::i_flock`链表**中，就完成了对该文件的加锁功能。要是其它进程想要对同一个文件加锁，那么它在将`file_lock`对象插入到`inode::i_flock`之前，会遍历该链表，如果没有发现冲突的锁，就将其插入到链表尾，表示加锁成功，否则失败。
+每当创建一把文件锁的时候，系统就会实例化一个**`struct file_lock`**对象（记录锁基本信息），最后把这个`file_lock`对象插入到被锁文件的**`inode::i_flock`链表**中，就完成了对该文件的加锁功能。由于同一个文件只有一个`inode`节点（Linux没有v节点只有i节点），多进程共享同一个文件相当于就共享同一个锁链表，链表上**节点代表是一把锁**（读锁和写锁），节点存在时表示没有解锁。通过共享锁链表就实现了文件的互斥和共享，其它进程想要对同一个文件加锁，那么它在将`file_lock`对象插入到`inode::i_flock`之前，会遍历该链表，如果没有发现冲突的锁，就将其插入到链表尾，表示加锁成功，否则失败。
+
+![文件锁的原理](img/Linux/lock-list.webp)
 
 ```c
 struct file_lock {
@@ -2557,38 +2560,48 @@ struct file_lock {
 						 * ->fl_blocker->fl_blocked_requests
 						 */
 	fl_owner_t fl_owner;
-	unsigned int fl_flags;
-	unsigned char fl_type;
-	unsigned int fl_pid;
+	unsigned int fl_flags;//锁的标识（租赁锁，阻塞锁，POSIX锁，FLOCK锁）
+	unsigned char fl_type;//锁类型（共享锁，独占锁）
+	unsigned int fl_pid;//拥有这把锁的进程号
 	int fl_link_cpu;		/* what cpu's list is this on? */
-	wait_queue_head_t fl_wait;
+	wait_queue_head_t fl_wait;//阻塞进程的等待队列
 	struct file *fl_file;
-	loff_t fl_start;
-	loff_t fl_end;
+	loff_t fl_start;//锁起始位置
+	loff_t fl_end;//锁中止位置
 
 	struct fasync_struct *	fl_fasync; /* for lease break notifications */
 	/* for lease breaks: */
 	unsigned long fl_break_time;
 	unsigned long fl_downgrade_time;
 
-	const struct file_lock_operations *fl_ops;	/* Callbacks for filesystems */
-	const struct lock_manager_operations *fl_lmops;	/* Callbacks for lockmanagers */
-	union {
-		struct nfs_lock_info	nfs_fl;
-		struct nfs4_lock_info	nfs4_fl;
-		struct {
-			struct list_head link;	/* link in AFS vnode's pending_locks list */
-			int state;		/* state of grant or error if -ve */
-			unsigned int	debug_id;
-		} afs;
-	} fl_u;
-} __randomize_layout;
+} ;
 
+
+struct file_lock {
+ struct file_lock *fl_next;  //文件锁链表的下一个结点
+ struct list_head fl_link;   //活动或阻塞链表的指针
+ struct list_head fl_block;  //被文件锁阻塞的等待者
+ fl_owner_t fl_owner;
+ unsigned int fl_pid;
+ wait_queue_head_t fl_wait;  //阻塞进程的等待队列
+ struct file *fl_file;
+ unsigned char fl_flags;
+ unsigned char fl_type;
+ loff_t fl_start;
+ loff_t fl_end;
+ struct fasync_struct * fl_fasync; /* for lease break notifications */
+ unsigned long fl_break_time; /* for nonblocking lease breaks */
+ struct file_lock_operations *fl_ops; /* Callbacks for filesystems */
+ struct lock_manager_operations *fl_lmops; /* Callbacks for lockmanagers */
+ union {
+  struct nfs_lock_info nfs_fl;
+ } fl_u;
+};
 ```
 
-![文件锁的原理](img/Linux/lock-list.webp)
 
-#### POSIX文件锁
+
+#### POSIX实现
 
 ##### 数据结构
 
@@ -2621,7 +2634,7 @@ int fcntl(int fd, int cmd, .../*struct flock *flockptr*/);
 //	返回值：若成功返回值依赖于cmd；失败返回-1
 ```
 
-#### [BSD文件锁](https://zhuanlan.zhihu.com/p/25134841)
+#### [BSD实现](https://zhuanlan.zhihu.com/p/25134841)
 
 ```c
 #define LOCK_SH 1 /* Shared lock.  */
@@ -2648,7 +2661,7 @@ int flock(int fd, int operation);
 
 ①：两种机制在遍历`inode::i_flock`链表**发现存在PID相同的锁时的处理机制不同**：`fcntl`允许同一个进程对同一个文件多次加同样一把锁，而解锁只需一次完成；`flock`则不支持这样操作（共享锁可以多次加锁而除外）。
 
-②：关闭一个描述符时：`fcntl`会关闭本进程设置的关于本描述符的一切文件锁，而`flock`不同。
+②：关闭一个描述符时：`fcntl`会关闭**本进程设置**的关于本描述符的一切文件锁，而`flock`不同。
 
 ③：锁继承：
 
@@ -3275,23 +3288,38 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 
 
 
-ShiftEdithttps://shiftedit.net/home#
-
-
-
-
-
-被遗忘的桃源——flock 文件锁 - 知乎
-https://zhuanlan.zhihu.com/p/25134841
-
 Linux文件锁学习-flock, lockf, fcntl - blcblc - 博客园
 https://www.cnblogs.com/charlesblc/p/6287631.html
 
 文件锁(高级IO)linux（zzk） | 码农家园
 https://www.codenong.com/cs105605976/
 
-yxkemiya.github.io/2019/08/19/file-lock/
-about:blank
+被遗忘的桃源——flock 文件锁 - 知乎
+https://zhuanlan.zhihu.com/p/25134841
+
+狼烟 / Linux内核源码分析：文件锁
+http://blog.hongxiaolong.com/posts/flock-and-lockf.html
+
+Linux中POSIX文件锁的实现_羽飞的专栏-CSDN博客
+https://blog.csdn.net/hnwyllmm/article/details/41626163
+
+fcntl与文件锁【转】_biqioso的博客-CSDN博客
+https://blog.csdn.net/biqioso/article/details/82749643
+
+文件描述符fd,struct files_struct - 狂奔~ - 博客园
+https://www.cnblogs.com/xiangtingshen/p/11961434.html
+
+Linux 2.6 中的文件锁 - Leo Chin - 博客园
+https://www.cnblogs.com/hnrainll/archive/2011/09/20/2182137.html
 
 Linux的进程间通信：文件和文件锁 - Linux开发社区 | CTOLib码库
 https://www.ctolib.com/topics-83246.html
+
+
+
+ShiftEdithttps://shiftedit.net/home#
+
+
+
+
+
