@@ -107,44 +107,48 @@ struct super_operations {//对文件系统和它的inode执行low-level operatio
 
 ![文件系统类型变量与超级块的联系](./img/Linux/filesystem-superblock.bmp)
 
-### 目录项对象`dentry`
+#### 关系
 
-为了方便查找文件而在内存创建的**目录项缓存**对象（目录也是文件、即**目录文件**），存储的是**磁盘文件系统目录树结构的一部分**，一个路径上的每一个组件都是一个`dentry`，如路径`/bin/vi.txt`中共有3个`dentry（ /、 bin、vi.txt）`。包含目录下的所有的文件的`inode`号和文件名等信息。其内部是树形结构，操作系统检索一个文件，都是从根目录开始，按层次解析路径中的所有目录，直到定位到文件。
+1. Linux支持的文件系统无论是否有文件系统的实例存在，都有且仅有一个`file_system_type`结构用于描述具体的文件系统的类型信息。相同文件系统的多个实例的超级块通过其域内的`s_instances`成员链接。
+2. 每一个文件系统的实例都对应有一个超级块和安装点，超级块通过它的一个域`s_type`指向其对应的具体的文件系统类型`file_system_type`。
+
+### [目录项对象`dentry`](https://bean-li.github.io/vfs-inode-dentry/)
+
+为了方便查找文件而在内存创建的**目录项缓存**对象（目录也是文件、即**目录文件**），存储的是**磁盘文件系统目录树结构的一部分**，一个路径上的每一个组件都是一个`dentry`，包含目录下的所有的文件的`inode`号和文件名等信息，如路径`/bin/vi.txt`中共有3个`dentry（ /、 bin、vi.txt）`，但通过文件链接，**同一个文件可以有多个`dentry`**。其内部是树形结构，操作系统检索一个文件，都是从根目录开始，按层次解析路径中的所有目录，直到定位到文件。
 
 #### dentry
 
 | dentry状态  | d_inode |                           使用状态                           |
 | :---------: | :-----: | :----------------------------------------------------------: |
 |  **used**   |  有效   |         `d_count`是正数、有一个或者多个用户正在使用          |
-| **unused**  |  有效   | `d_count`是0、VFS`并没有使用该`dentry`，但任在`dentry cache` |
+| **unused**  |  有效   | `d_count`是0、`VFS`并没有使用该`dentry`，但仍在`dentry cache` |
 | **negtive** | `null`  | `inode`对象被销毁了或者是查找的路径名称不对。此时`dentry`仍然被保存在`cache`中 |
 
 ```c
-#ifdef __LITTLE_ENDIAN
-#define HASH_LEN_DECLARE u32 hash; u32 len;
-#else
-#define HASH_LEN_DECLARE u32 len; u32 hash;
-#endif
-
 struct qstr {//quick string
 	union {
-		struct {
-			HASH_LEN_DECLARE;
+		struct {//为大小端优化了内存布局
+			HASH_LEN_DECLARE;//针对大小端有不同的变量申明顺序，含有本name的hash值
 		};
 		u64 hash_len;
 	};
-	const unsigned char *name;//文件名(不含路径)
+	const unsigned char *name;//路径的最后一个分量，即文件名(不含路径)
 };
 
 struct dentry {//directory entry
+ 　 atomic_t d_count;//目录项对象使用计数器 
 	struct dentry *d_parent;//父目录
-	struct qstr d_name;//文件全名
+	struct qstr d_name;//文件名
+	struct hlist_bl_node d_hash;//哈希链表：hash由父dentry的地址和该d_name计算出，用于快速索引到本dentry
+    struct list_head d_lru; // 未使用的dentry构成的链表 
 	struct inode *d_inode;//与该目录项关联的inode
 	unsigned char d_iname[DNAME_INLINE_LEN];//文件缩略名
 	const struct dentry_operations *d_op;//此目录项支持的操作
 	struct super_block *d_sb;//这个目录项所属的文件系统的超级块(目录项树的根)
 	void *d_fsdata;//具体文件系统的数据
 	struct list_head d_subdirs;//子目录链表
+	struct list_head d_child;//父目录的子目录链表，下面的hash链表可以实现快速查找
+	struct hlist_bl_node d_hash;//哈希链表：hash由父dentry的地址和该d_name计算出，用于快速索引到本dentry
 	//... 其他数据成员
 };
 
@@ -156,15 +160,19 @@ struct dentry_operations {
 };
 ```
 
-#### dentry cache
-
-`dentry`存储在`cache`中导致对应的`inode`的使用计数大于1。因此只要**有效`dentry`**被`cache`，对应的`inode`就一定也被cache到了内存之中。
-
 ![dentry与inode之间的联系](./img/Linux/dentry-inode.png)
+
+#### [dentry cache](https://blog.csdn.net/whatday/article/details/100663436)
+
+为了提高目录项对象的处理效率而设计的**目录项高速缓存**（`dcache`），只要**有效`dentry`**被`cache`，对应的`inode`就一定也被cache到了内存之中。由空间由**`slab`分配器管理**，主要由`dentry`对象的哈希链表`dentry_hashtable`和未使用的`dentry`对象链表`dentry_unused`**两个数据结构**组成：
+
+①：`dentry_hashtable`链表`dentry::dhash`：`dcache`中的所有`dentry`对象都通过`d_hash`指针域链到相应的`dentry`哈希链表中。
+
+②：`dentry_unused`链表（LRU链表）`dentry_lru`：`dcache`中所有处于`unused`状态和`negative`状态的`dentry`对象都通过其`d_lru`指针域链入`dentry_unused`链表中。
 
 ### 文件对象
 
-文件对象是**已打开的文件**在内存中的表示，主要用于建立进程和磁盘上的文件的对应关系。文件对象和物理文件的关系类型进程和程序的关系，文件对象仅仅在进程观点上代表已经打开的文件。**一个文件对应的文件对象可能不是惟一的**，但是其对应的索引节点和目录项对象是惟一的。系统的所有已打开的文件信息将被内核用一张系统级的**已打开文件表**组织起来。
+文件对象是**已打开的文件**在内存中的表示，主要用于建立进程和磁盘上的文件的对应关系。文件对象和物理文件的关系类型进程和程序的关系，文件对象仅仅在进程观点上代表已经打开的文件。**一个文件对应的文件对象可能不是惟一的**，但是其对应的索引节点和目录项对象是唯一的。系统的所有已打开的文件信息将被内核用一张系统级的**已打开文件表**组织起来。
 
 #### 已打开文件
 
@@ -212,18 +220,19 @@ struct address_space { //对应一个已缓存文件，管理着若干个页
 
 **`address_space`**：一个`struct address_space`管理表示了一个文件在**所有已缓存物理页**。它是页缓存和外部设备中文件系统的桥梁，**关联了内存系统和文件系统**。
 
+![基数树](img/Linux/radix_tree.png)
+
 ### 索引节点对象 inode
 
-存储了文件的元数据（文件大小，设备标识符，用户标识符，用户组标识符，文件模式，扩展属性，文件读取或修改的时间戳，链接数量，指向存储该内容的磁盘区块的指针，文件分类等等），代表了存储设备上的一个实际的**物理文件**。当一个文件被访问时，内核会在内存中组装相应的索引节点对象，以便向内核提供对一个文件进行操作时所必需的全部信息（这些信息一部分存储在磁盘特定位置，另外一部分是在加载时动态填充的）。没有`inode`的**匿名文件**则需要根据磁盘上的数据动态生成`inode`的信息，并将这些信息填入内存中的`inode`对象。文件系统内部依靠`inode`来索引文件。
-
-#### inode的产生
-
-`inode`节点的大小一般是128字节或256字节，每个节点管理2KB的空间（一般文件系统中很少有文件小于2KB的，所以预定按照2KB分），节点总数在格式化时就给定(现代OS可以动态变化)。`inode`有两种，一种是VFS的`inode`，一种是具体文件系统的`inode`。前者在内存中，后者在磁盘中。所以每次其实是将磁盘中的`inode`调进填充内存中的`inode`，这样才是算使用了磁盘文件`inode`。[来源](https://www.eet-china.com/mp/a38145.html)
+存储了**文件元数据**（文件大小，设备标识符，用户标识符，用户组标识符，文件模式，扩展属性，文件读取或修改的时间戳，链接数量，指向存储该内容的磁盘区块的指针，文件分类等），代表了存储设备上的一个实际的**物理文件**且不随文件名改变而变化。文件系统内部依靠`inode`而非文件名来识别文件（借此实现软件的[热更新](https://zhuanlan.zhihu.com/p/143430585)）。
 
 ```c
-struct inode {
+struct inode {//文件的惟一标识符，文件名可以更改但inode号锁定文件
+	unsigned long i_ino; //全局唯一的索引节点号
+	atomic_t i_count;  //引用计数器
 	const struct inode_operations *i_op;
-	struct super_block	*i_sb;//inode对应的文件系统的超级块
+	struct super_block *i_sb;//inode对应的文件系统的超级块
+	struct address_space *i_mapping;//管理该inode所有缓存页面的address_space
 	loff_t i_size; // 文件大小，字节数
 	blkcnt_t i_blocks; // 文件大小，块数
 	struct timespec64 i_atime, i_mtime, i_ctime;//上次打开、修改、创建时间
@@ -232,7 +241,9 @@ struct inode {
         struct block_device *i_bdev; /* block device driver */
         struct cdev *i_cdev; /* character device driver */
     };
-    //其他数据成员
+    struct list_head i_lru;//全局LRU链表，保存所有unused的inode	
+	unsigned long i_state;
+    //...其他数据成员
 }
 
 struct inode_operations {
@@ -246,12 +257,31 @@ struct inode_operations {
 };
 ```
 
+#### inode的产生
+
+`inode`节点的大小一般是128字节或256字节，每个节点管理2KB的空间（一般文件系统中很少有文件小于2KB的，所以预定按照2KB分），节点总数在格式化时就给定(现代OS可以动态变化)。`inode`有两种，一种是VFS的`inode`，一种是具体文件系统的`inode`。前者在内存中，后者在磁盘中。
+
+当一个文件被访问时，内核会在内存中组装相应的索引节点对象，以便向内核提供对一个文件进行操作时所必需的全部信息（这些信息一部分存储在磁盘特定位置，另外一部分是在加载时动态填充的）。没有`inode`的**匿名文件**则需要根据磁盘上的数据动态生成`inode`的信息，并将这些信息填入内存中的`inode`对象。
+
+#### [inode的管理](https://www.cnblogs.com/long123king/archive/2014/01/30/3536486.html)
+
+```sh
+ls -l # 看文件名对应的inode号码
+```
+
+| `inode`状态  |       `unused`       |          `use`           |         ``dirty``          |
+| :----------: | :------------------: | :----------------------: | :------------------------: |
+|   **含义**   | 内容无效、空间可复用 | 内容有效、与某个文件关联 | 与介质上内容不一致、需回写 |
+| **存储位置** | 全局`inode LRU`链表  |   全局`inode use`链表    |  `super_block`中的链表域   |
+
+##### 链接
+
+|            |               `inode`号               |        内容        |
+| :--------: | :-----------------------------------: | :----------------: |
+| **软链接** | 不同，实际数据文件`inode`引用计数不变 | 被链接的文件的路径 |
+| **硬链接** | 相同，实际数据文件`inode`引用计数增加 |      文件内容      |
+
 ![超级块与inode节点之间的联系](./img/Linux/superblock-inode.png)
-
-### NOTE
-
-1. Linux支持的文件系统无论是否有文件系统的实例存在，都有且仅有一个`file_system_type`结构用于描述具体的文件系统的类型信息。相同文件系统的多个实例的超级块通过其域内的s_instances成员链接。
-2. 每一个文件系统的实例都对应有一个超级块和安装点，超级块通过它的一个域s_type指向其对应的具体的文件系统类型`file_system_type`。
 
 ## 进程与VFS
 
@@ -333,16 +363,6 @@ struct fdtable{//预先分配的fdtable
 
 ![扩展后的fdtable](./img/Linux/alloc_fdtable.png)
 
-进程使用`files_struct`, `fs_struct` 和`mnt_namesapce`这三个数据结构来将进程和`VFS`层关联起来，记录已打开文件列表、进程的根文件系统、当前工作目录等信息。
-
-![task_struct、fs_struct、files_struct、fdtable、file的关系](img/Linux/task-fs-file-fdtable.png)
-
-![VFS内部的组织逻辑](img/Linux/how-organize.png)
-
-内核通过进程的`task_struct`中的`files`域指针找到**`file_struct`结构体**，该结构体包含了一个由`file *`构成的**已打开文件描述符表**，表中的每一个指针指向VFS中文件列表中的**文件对象**。每个进程可以打开的文件描述符的数量受到系统级和用户级的双重限制。
-
-![进程如何访问文件](img/Linux/task-fd-file-dentry-inode.png)
-
 ### 文件相关三张表
 
 #### 进程级文件描述附表
@@ -355,7 +375,7 @@ struct fdtable{//预先分配的fdtable
 
 #### 系统级文件打开表
 
-文件表保存了所有进程打开的文件的信息，每一个表项描述一个被进程打开的文件（可能出现多个表项对应一个`idode`），该表项记录了一个进程对文件读写的偏移量、存取权限和文件的`inode`指针。
+文件表保存了所有进程打开的文件的信息，每一个表项描述一个被进程打开的文件（可能出现多个表项对应一个`idode`），该表项记录了一个进程对文件**读写的偏移量**、存取权限和文件的`inode`指针。
 
 #### 系统级`inode`表
 
@@ -366,6 +386,30 @@ struct fdtable{//预先分配的fdtable
 ![文件描述符-打开文件列表-inode节点关系图](img/Linux/fd-file-inode.png)
 
 同一进程使用`dup`造成进程A中`file:23`的状态、`fork`的父子进程造成`file:73`的状态、不同进程调用`open`打开相同文件造成`inode:1976`的状态
+
+### 进程与文件
+
+进程使用`files_struct`, `fs_struct` 和`mnt_namesapce`这三个数据结构来将进程和`VFS`层关联起来，记录已打开文件列表、进程的根文件系统、当前工作目录等信息。
+
+![task_struct、fs_struct、files_struct、fdtable、file的关系](img/Linux/task-fs-file-fdtable.png)
+
+![VFS内部的组织逻辑](img/Linux/how-organize.png)
+
+内核通过进程的`task_struct`中的`files`域指针找到**`file_struct`结构体**，该结构体包含了一个由`file *`构成的**已打开文件描述符表**，表中的每一个指针指向VFS中文件列表中的**文件对象**。
+
+![进程如何访问文件](img/Linux/task-fd-file-dentry-inode.png)
+
+![file_to_address_space](img/Linux/file_to_address_space.png)
+
+## VFS与FS
+
+### inode&dentry
+
+VFS文件系统中的`inode`和`dentry`与实际文件系统的`inode`和`dentry`有一定的关系，但不能等同。真实磁盘文件的`inode`和`dentry`是存在于物理外存上的，但VFS中的`inode`和`dentry`是存在于内存中的，系统读取外存中的`inode`和`dentry`信息进行一定加工后，生成内存中的`inode`和`dentry`。虚拟的文件系统也具有`inode`和`dentry`结构，只是这是系统根据相应的规则生成的，不存在于实际外存中。
+
+### FS与磁盘
+
+![磁盘与文件系统](./img/Linux/disk-fs.png)
 
 ## 特殊文件系统
 
@@ -379,16 +423,6 @@ struct fdtable{//预先分配的fdtable
 | `sysfs(≥2.6)` |  实际连接到系统上的设备和总线  |           实现和内核的交互           |
 
 **`sockfs`**：`socketfs`伪文件系统被编译进内核（而非一个模块）在系统运行期间**总是被装载**着的（因为要支持整个TCP/IP协议栈）。它实现了VFS中的4种主要对象：超级块`super block`、索引节点`inode`、目录项对象`dentry`和文件对象`file`，当执行文件IO系统调用时，VFS就将请求转发给`sockfs`，而`sockfs`就调用具体的协议实现。
-
-## VFS与FS
-
-### inode&dentry
-
-VFS文件系统中的inode和dentry与实际文件系统的inode和dentry有一定的关系，但不能等同。真实磁盘文件的inode和dentry是存在于物理外存上的，但VFS中的inode和dentry是存在于内存中的，系统读取外存中的inode和dentry信息进行一定加工后，生成内存中的inode和dentry。虚拟的文件系统也具有inode和dentry结构，只是这是系统根据相应的规则生成的，不存在于实际外存中。
-
-### FS与磁盘
-
-![磁盘与文件系统](./img/Linux/disk-fs.png)
 
 # 任务调度
 
@@ -980,9 +1014,17 @@ int clone(int (*fn)(void *), void *child_stack, int flags, void *arg);
 
 ### `dup系列`
 
-`dup`调用将产生下图`file:23`的状态，此时新老描述符**共享系统级打开文件表项**（即偏移量、标志和锁），**不共享文件描述符表项**（重要的是`close-on-exec`标志），`inode`表中文件对应的表项的**引用计数加一**。
+#### 文件描述符
 
-![文件描述符-打开文件列表-inode节点关系图](img/Linux/fd-file-inode.png)
+|          |          用户级限制           |                        系统级限制                        |
+| :------: | :---------------------------: | :------------------------------------------------------: |
+|   查看   |          `ulimit -n`          | `cat /proc/sys/fs/file-max`或`sysctl -a |grep file-max ` |
+| 临时修改 |        `ulimit -SHn x`        | `echo x >/proc/sys/fs/file-max`或`sysctl -w file-max=x`  |
+| 永久修改 | 改`/etc/security/limits.conf` |            改`/etc/sysctl.conf`后`sysctl -p`             |
+
+#### 实现原理
+
+`dup`系列调用会在原有旧文件描述符的基础之上创建一个新的文件描述符，新文件描述符的文件指针和旧文件描述符相同**指向同一个文件**，但其文件打开标志与旧文件描述符不同（重要的是`close-on-exec`标志），新老描述符**共享系统级打开文件表项**（即偏移量、标志和锁），对应打开文件表项中的文件**引用计数加一**。如下图`file:23`的状态。
 
 ```c
 int dup(int oldfd);
@@ -990,11 +1032,15 @@ int dup2(int oldfd,int newfd);
 int dup3(int oldfd, int newfd, int flags);
 //@Parameters:
 //	oldfd: 待复制的旧文件描述符
-//	newfd: 期望得到的文件描述符的下限
+//	newfd: 期望得到的文件描述符的下限，如果newfd是一个已经打开的文件描述符，则首先关闭该文件，然后再复制。
 //	flags: 设置close-on-exec 标志位的开启和关闭
 //@Return value
 //	 成功返回不小于newfd的最小可用文件描述符；失败返回-1并设置errno
 ```
+
+![文件描述符-打开文件列表-inode节点关系图](img/Linux/fd-file-inode.png)
+
+同一进程使用`dup`造成进程A中`file:23`的状态；`fork`的父子进程造成`file:73`的状态；不同进程调用`open`打开相同文件造成`inode:1976`的状态；同一进程多次调用`open`打开打开同一文件时会创建不同的文件描述符表项和不同的文件打开表项，但是最终指向的`inode`节点一样（`inode:1976`的状态）。
 
 # 进程通信
 
@@ -2495,6 +2541,53 @@ lslocks#查看当前系统中的文件锁使用情况
 
 ### 实现
 
+#### [实现原理](https://sjt157.top/2019/01/17/%E6%96%87%E4%BB%B6%E9%94%81/)
+
+每当创建一把文件锁的时候，系统就会实例化一个**`struct file_lock`**对象（记录锁的类型（共享锁，独占锁）、拥有这把锁的进程号、锁的标识（租赁锁，阻塞锁，POSIX锁，FLOCK锁）等）。最后把这个`file_lock`对象插入到被锁文件的**`inode::i_flock`链表**中，就完成了对该文件的加锁功能。要是其它进程想要对同一个文件加锁，那么它在将`file_lock`对象插入到`inode::i_flock`之前，会遍历该链表，如果没有发现冲突的锁，就将其插入到链表尾，表示加锁成功，否则失败。
+
+```c
+struct file_lock {
+	struct file_lock *fl_blocker;	/* The lock, that is blocking us */
+	struct list_head fl_list;	/* link into file_lock_context */
+	struct hlist_node fl_link;	/* node in global lists */
+	struct list_head fl_blocked_requests;	/* list of requests with
+						 * ->fl_blocker pointing here
+						 */
+	struct list_head fl_blocked_member;	/* node in
+						 * ->fl_blocker->fl_blocked_requests
+						 */
+	fl_owner_t fl_owner;
+	unsigned int fl_flags;
+	unsigned char fl_type;
+	unsigned int fl_pid;
+	int fl_link_cpu;		/* what cpu's list is this on? */
+	wait_queue_head_t fl_wait;
+	struct file *fl_file;
+	loff_t fl_start;
+	loff_t fl_end;
+
+	struct fasync_struct *	fl_fasync; /* for lease break notifications */
+	/* for lease breaks: */
+	unsigned long fl_break_time;
+	unsigned long fl_downgrade_time;
+
+	const struct file_lock_operations *fl_ops;	/* Callbacks for filesystems */
+	const struct lock_manager_operations *fl_lmops;	/* Callbacks for lockmanagers */
+	union {
+		struct nfs_lock_info	nfs_fl;
+		struct nfs4_lock_info	nfs4_fl;
+		struct {
+			struct list_head link;	/* link in AFS vnode's pending_locks list */
+			int state;		/* state of grant or error if -ve */
+			unsigned int	debug_id;
+		} afs;
+	} fl_u;
+} __randomize_layout;
+
+```
+
+![文件锁的原理](img/Linux/lock-list.webp)
+
 #### POSIX文件锁
 
 ##### 数据结构
@@ -2546,14 +2639,18 @@ int flock(int fd, int operation);
 
 #### [比较](https://www.cnblogs.com/charlesblc/p/6287631.html)
 
-进程在打开一个文件时，涉及到进程级文件描述符表、系统级打开文件表和系统级inode表。两种锁的实现都是在inode上进行加锁，但是BSD认为所的持有者是系统级打开文件表、而POSIX认为是进程持有了锁。[参考来源](https://yxkemiya.github.io/2019/08/19/file-lock/) 此处有问题(https://www.cnblogs.com/charlesblc/p/6287631.html)
+~~两种锁的实现都是在`inode`上进行加锁，但是BSD认为所的持有者是系统级打开文件表、而POSIX认为是进程持有了锁。[参考来源](https://yxkemiya.github.io/2019/08/19/file-lock/) 此处有问题(https://www.cnblogs.com/charlesblc/p/6287631.html)~~
 
-![打开文件时三个表之间的关系](./img/Linux/open-file.png)
+| 实现  |   API   |                锁类型                |  NFS   |         进程中止         |
+| :---: | :-----: | :----------------------------------: | :----: | :----------------------: |
+|  BSD  | `flock` |    文件锁；共享锁/排它锁；建议锁     | 不支持 | 释放进程建立的所有文件锁 |
+| POSIX | `fcntl` | 文件锁/记录锁；排它锁；建议锁/强制锁 |  支持  | 释放进程建立的所有文件锁 |
 
-| 实现  |   API   |                锁类型                |  NFS   | 递归 |
-| :---: | :-----: | :----------------------------------: | :----: | :--: |
-|  BSD  | `flock` |    文件锁；共享锁/排它锁；建议锁     | 不支持 | 支持 |
-| POSIX | `fcntl` | 文件锁/记录锁；排它锁；建议锁/强制锁 |  支持  | 支持 |
+①：两种机制在遍历`inode::i_flock`链表**发现存在PID相同的锁时的处理机制不同**：`fcntl`允许同一个进程对同一个文件多次加同样一把锁，而解锁只需一次完成；`flock`则不支持这样操作（共享锁可以多次加锁而除外）。
+
+②：关闭一个描述符时：`fcntl`会关闭本进程设置的关于本描述符的一切文件锁，而`flock`不同。
+
+③：锁继承：
 
 ### 标准IO库文件锁
 
@@ -2707,7 +2804,7 @@ struct page {//描述每一个物理内存页
 
 ==此部分主要是思想的描述，由于slab有多种实现方法，故下文中的数据结构描述只是抽象的描述==
 
-Slab分配器向外部提供的接口为**`kmalloc()、kfree()`**，它**以伙伴系统为基础、以字节为分配单位、基于对象的**为**经常分配并释放的小对象**提供内存管理和**缓存**机制。Slab分配器提供了**专用slab**（负责为`m_area_struct、mm_struct`等特定结构体分配内存）和**通用slab**两种（`sudo cat /proc/slabinfo`中名为`kmalloc-xxx`的为通用型slab）分配，其分配和管理机制完全相同。
+Slab分配器向外部提供的接口为**`kmalloc()、kfree()`**，它**以伙伴系统为基础、以字节为分配单位、基于对象的**为**经常分配并释放的小对象**提供内存管理和**缓存**机制。Slab分配器提供了**专用slab**（负责为`m_area_struct、mm_struct`等特定结构体分配内存）和**通用slab**两种（`sudo cat /proc/slabinfo`中名为`kmalloc-xxx`的为通用型slab）分配，两种`slab`的分配和管理机制完全相同。
 
 #### 数据结构
 
@@ -3176,21 +3273,25 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 
 
 
+
+
+ShiftEdithttps://shiftedit.net/home#
+
+
+
+
+
 被遗忘的桃源——flock 文件锁 - 知乎
 https://zhuanlan.zhihu.com/p/25134841
 
-VFS中的file，dentry和inode
-https://bean-li.github.io/vfs-inode-dentry/
+Linux文件锁学习-flock, lockf, fcntl - blcblc - 博客园
+https://www.cnblogs.com/charlesblc/p/6287631.html
 
-Linux VFS虚拟文件系统初探
-https://www.sunxiaokong.xyz/2019-12-02/lzx-01-babyVFS/
+文件锁(高级IO)linux（zzk） | 码农家园
+https://www.codenong.com/cs105605976/
 
-Dentry Cache - Google 搜索
-https://www.google.com/search?client=firefox-b-d&q=Dentry+Cache
+yxkemiya.github.io/2019/08/19/file-lock/
+about:blank
 
-linux内核数据结构学习总结 - 郑瀚Andrew.Hann - 博客园
-https://www.cnblogs.com/LittleHann/p/3865490.html
-
-ShiftEdit
-https://shiftedit.net/home#
-
+Linux的进程间通信：文件和文件锁 - Linux开发社区 | CTOLib码库
+https://www.ctolib.com/topics-83246.html
