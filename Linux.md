@@ -2534,72 +2534,57 @@ lslocks#查看当前系统中的文件锁使用情况
 
 #### 建议锁（Advisory locking）
 
-也叫事务锁，是Linux**默认的锁**类型。一个进程可以忽略其他进程加的锁，直接对目标文件进行读写操作。因而，只有当前进程主动调用 `flock`去检测是否已有其他进程对目标文件加了锁，文件锁才会在多进程的同步中起到作用。
+也叫事务锁，是Linux**默认的锁**类型。一个进程可以忽略其他进程加的锁，直接对目标文件进行读写操作。因而，只有当前进程主动调用 `flock`去检测是否已有其他进程对目标文件加了锁，文件锁才会在多进程的同步中起到作用。建议锁只对主动检查和遵守规则的**合作进程**起作用。
 
 #### 强制锁（Mandatory locking）
 
-内核管理的底层锁。当有进程对某个文件上锁之后，其他进程即使不在操作文件之前检查锁，也会在支持强制锁`open、read、write`等文件操作时发生错误。内核将对有锁的文件在任何情况下的锁规则都生效，这就是强制锁的行为。
+当有进程对某个文件上锁之后，其他进程即使不在操作文件之前检查锁，也会在提供强制锁支持的`open、read、write`等文件操作时无法绕开锁，**进程行为取决于所执行的操作模式和文件锁的类型**。
+
+| 已加强制锁类型 | 阻塞读 | 阻塞写 | 非阻塞读 | 非阻塞写 |
+| :------------: | :----: | :----: | :------: | :------: |
+|      读锁      | 正常读 |  阻塞  |  正常读  |  EAGAIN  |
+|      写锁      |  阻塞  |  阻塞  |  EAGAIN  |  EAGAIN  |
+
+此外Linux还引入了两种强制锁的变种形式：**共享模式强制锁（share-mode mandatory lock）和租借锁（lease）**。
+
+##### 共享模式锁
+
+其他进程打开加上了共享模式强制锁的文件的时不能与该文件的共享模式强制锁所设置的访问模式相冲突；可以用于某些私有网络文件系统；可移植性不好。
+
+##### 租借锁
+
+租借锁**保护整个文件**，当进程尝试打开一个被租借锁保护的文件时，该进程会被阻塞，同时，在一定时间内拥有该文件租借锁的进程会收到一个信号。收到信号之后，拥有该文件租借锁的进程会首先更新文件，从而保证了文件内容的一致性，接着，该进程释放这个租借锁。如果拥有租借锁的进程在一定的时间间隔内没有完成工作，内核就会自动删除这个租借锁或者将该锁进行降级，从而允许被阻塞的进程继续工作。
 
 ### 实现
 
-#### [文件锁](https://sjt157.top/2019/01/17/%E6%96%87%E4%BB%B6%E9%94%81/)
+#### [文件锁](https://www.cnblogs.com/hnrainll/archive/2011/09/20/2182137.html)
 
 每当创建一把文件锁的时候，系统就会实例化一个**`struct file_lock`**对象（记录锁基本信息），最后把这个`file_lock`对象插入到被锁文件的**`inode::i_flock`链表**中，就完成了对该文件的加锁功能。由于同一个文件只有一个`inode`节点（Linux没有v节点只有i节点），多进程共享同一个文件相当于就共享同一个锁链表，链表上**节点代表是一把锁**（读锁和写锁），节点存在时表示没有解锁。通过共享锁链表就实现了文件的互斥和共享，其它进程想要对同一个文件加锁，那么它在将`file_lock`对象插入到`inode::i_flock`之前，会遍历该链表，如果没有发现冲突的锁，就将其插入到链表尾，表示加锁成功，否则失败。
 
 ![文件锁的原理](img/Linux/lock-list.webp)
 
 ```c
-struct file_lock {
-	struct file_lock *fl_blocker;	/* The lock, that is blocking us */
-	struct list_head fl_list;	/* link into file_lock_context */
-	struct hlist_node fl_link;	/* node in global lists */
-	struct list_head fl_blocked_requests;	/* list of requests with
-						 * ->fl_blocker pointing here
-						 */
-	struct list_head fl_blocked_member;	/* node in
-						 * ->fl_blocker->fl_blocked_requests
-						 */
-	fl_owner_t fl_owner;
+struct file_lock {//一把文件锁
+	struct file_lock *fl_blocker;/* The lock, that is blocking us */
+	struct list_head fl_list;//文件锁链表
+	struct hlist_node fl_link;/* node in global lists */
+	struct list_head fl_blocked_requests;/* list of requests with ->fl_blocker pointing here*/
+	struct list_head fl_blocked_member;	/* node in->fl_blocker->fl_blocked_requests*/
+    fl_owner_t fl_owner;//锁拥有者的files_struct
 	unsigned int fl_flags;//锁的标识（租赁锁，阻塞锁，POSIX锁，FLOCK锁）
 	unsigned char fl_type;//锁类型（共享锁，独占锁）
 	unsigned int fl_pid;//拥有这把锁的进程号
-	int fl_link_cpu;		/* what cpu's list is this on? */
+	int fl_link_cpu;/* what cpu's list is this on? */
 	wait_queue_head_t fl_wait;//阻塞进程的等待队列
-	struct file *fl_file;
-	loff_t fl_start;//锁起始位置
-	loff_t fl_end;//锁中止位置
-
-	struct fasync_struct *	fl_fasync; /* for lease break notifications */
-	/* for lease breaks: */
-	unsigned long fl_break_time;
-	unsigned long fl_downgrade_time;
-
+	struct file *fl_file;//指向文件对象
+	loff_t fl_start;//锁区域起始位置
+	loff_t fl_end;//锁区域终止位置
+	struct fasync_struct *	fl_fasync;//用于租借暂停通知
+	unsigned long fl_break_time;//租借的剩余时间，默认45s，可通过procfs改变
+	unsigned long fl_downgrade_time;//锁降级等待时间
+	//... 其他数据成员
 } ;
-
-
-struct file_lock {
- struct file_lock *fl_next;  //文件锁链表的下一个结点
- struct list_head fl_link;   //活动或阻塞链表的指针
- struct list_head fl_block;  //被文件锁阻塞的等待者
- fl_owner_t fl_owner;
- unsigned int fl_pid;
- wait_queue_head_t fl_wait;  //阻塞进程的等待队列
- struct file *fl_file;
- unsigned char fl_flags;
- unsigned char fl_type;
- loff_t fl_start;
- loff_t fl_end;
- struct fasync_struct * fl_fasync; /* for lease break notifications */
- unsigned long fl_break_time; /* for nonblocking lease breaks */
- struct file_lock_operations *fl_ops; /* Callbacks for filesystems */
- struct lock_manager_operations *fl_lmops; /* Callbacks for lockmanagers */
- union {
-  struct nfs_lock_info nfs_fl;
- } fl_u;
-};
 ```
-
-
 
 #### POSIX实现
 
@@ -2672,8 +2657,6 @@ int flock(int fd, int operation);
 主要面临以下三个问题：①进程在`fork`的时候会复制一整套父进程的地址空间，这将导致子进程中的FILE结构与父进程完全一致（父进程如果加锁，子进程也将持有这把锁）；②由于父子进程地址空间相互独立的，子进程也无法通过FILE结构体检查别的进程的是否加了标准IO库提供的文件；③如果线程内部使用`fopen`重新打开文件，那么返回的FILE *地址不同与其他线程不同，也起不到线程的互斥作用。
 
 ```c
-#include <stdio.h>
-
 void flockfile(FILE *filehandle);
 int ftrylockfile(FILE *filehandle);
 void funlockfile(FILE *filehandle);
@@ -3284,36 +3267,7 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 
 [Linux 虚拟文件系统四大对象：超级块、inode、dentry、file之间关系](https://www.eet-china.com/mp/a38145.html)
 
-
-
-
-
-Linux文件锁学习-flock, lockf, fcntl - blcblc - 博客园
-https://www.cnblogs.com/charlesblc/p/6287631.html
-
-文件锁(高级IO)linux（zzk） | 码农家园
-https://www.codenong.com/cs105605976/
-
-被遗忘的桃源——flock 文件锁 - 知乎
-https://zhuanlan.zhihu.com/p/25134841
-
-狼烟 / Linux内核源码分析：文件锁
-http://blog.hongxiaolong.com/posts/flock-and-lockf.html
-
-Linux中POSIX文件锁的实现_羽飞的专栏-CSDN博客
-https://blog.csdn.net/hnwyllmm/article/details/41626163
-
-fcntl与文件锁【转】_biqioso的博客-CSDN博客
-https://blog.csdn.net/biqioso/article/details/82749643
-
-文件描述符fd,struct files_struct - 狂奔~ - 博客园
-https://www.cnblogs.com/xiangtingshen/p/11961434.html
-
-Linux 2.6 中的文件锁 - Leo Chin - 博客园
-https://www.cnblogs.com/hnrainll/archive/2011/09/20/2182137.html
-
-Linux的进程间通信：文件和文件锁 - Linux开发社区 | CTOLib码库
-https://www.ctolib.com/topics-83246.html
+[文件锁的API实现细节](https://blog.csdn.net/hnwyllmm/article/details/41626163)
 
 
 
