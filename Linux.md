@@ -1570,13 +1570,44 @@ int shmdt(const void *shmaddr);//将共享内存从当前进程中分离,当前�
 | SystemV | `shm`  | 基于`shm`文件系统中的文件，不写回磁盘 | 不删则随内核存在 |     需考虑     |
 |  Posix  | `mmap` |      映射普通文件，可以写回磁盘       |    随文件存在    |    不用考虑    |
 
-## BSD Socket
+## Socket
 
-### Unix流式Socket
+套接字提供了一套本机内（UNIX Socket）或主机间（BSD Socket）的通信机制，Linux在底层通过同一套API对两种`Socket`的通信都提供了支持。每个套接字的类型由**域domain、类型type、协议protocal**三个属性确定，其唯一标识由其使用的地址确定，地址的格式随域（协议族）的不同而不同（UNIX有其socket命名规则，BSD使用ip:port元组）。
 
-### Unix数据包式Socket
+### 属性
 
-### BSD式Socket
+**域 domain**：指定套接字通信中使用的网络介质；如AF_UNIX/AF_LOCAL（Unix Socket）、AF_INET（IPV4）、AF_INET6（IPV6）、AF_NETLINK（内核进程通信）……。
+
+**类型 type**：如SOCK_STREAM（有序，可靠，双工、有连接、支持带外传输的字节流）、SOCK_DGRAM（无连接、不可靠、单次传输长度受限）、SOCK_RAW（原始字节）……。
+
+**协议 protocal**：
+
+### UNIX Socket
+
+也叫UDS（Unix Domain Socket），UDS通过本机内核传输原始数据，不需要经过网络协议栈的打包、拆包、校验等操作。对于本地套接字来说，流式套接字（SOCK_STREAM）是一个有顺序的、可靠的双向字节流，相当于在本地进程之间建立起一条数据通道；数据报式套接字（SOCK_DGRAM）相当于单纯的发送消息，在进程通信过程中，理论上可能会有信息丢失、复制或者不按先后次序到达的情况，但由于其在本地通信，不通过外界网络，这些情况出现的概率很小。 
+
+#### socket命名
+
+UNIX流式套接字（**常用**）的通信双方都需要本地地址，其中服务端必须通过`struct sockaddr_un`变量明确指明地址、客户端必须使用和服务端相同的命名方式。socket进程通信的命名方式有两种：
+
+**普通命名**：系统**根据参数中的名字**自动**创建同名的socket文件**，客户端建立链接的时候通过**读取此sock文件**来和服务端建立链接。
+
+**抽象命名空间**：将`sockaddr_un::sun_path`的**第一字节置0**即启用了该特性。此时系统不需要创建socket文件、客户端只需要知道名字就可以连接
+
+#### [使用](https://cloud.tencent.com/developer/article/1722546)
+
+```c
+struct sockaddr_un {//UDS中的套接字地址
+    sa_family_t sun_family;//套接子类型：AF_UNIX/AF_LOCAL
+    char sun_path[UNIX_PATH_MAX];//套接字文件路径名 
+};
+
+socket(AF_UNIX/AF_LOCAL, SOCK_STREAM/SOCK_DGRAM, 0);//建立UNIX Socket
+```
+
+### BSD Socket
+
+详见网络编程
 
 ## 消息队列
 
@@ -3276,5 +3307,4 @@ ShiftEdithttps://shiftedit.net/home#
 
 
 https://zhuanlan.zhihu.com/p/25134841
-
 
