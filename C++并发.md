@@ -1,95 +1,102 @@
 <!-- vim-markdown-toc GFM -->
 
-+ [线程管理](#线程管理)
+* [线程管理](#线程管理)
     * [线程本地存储TLS](#线程本地存储tls)
-        - [thread_local](#thread_local)
+        * [thread_local](#thread_local)
     * [thread对象](#thread对象)
-        - [线程创建](#线程创建)
-        - [线程运行](#线程运行)
-            + [参数传递](#参数传递)
+        * [线程创建](#线程创建)
+        * [线程运行](#线程运行)
+            * [参数传递](#参数传递)
                 * [**NOTE**](#note)
-        - [线程结束](#线程结束)
+        * [线程结束](#线程结束)
     * [线程管理](#线程管理-1)
-        - [让渡](#让渡)
-            + [yield](#yield)
-            + [sleep_for](#sleep_for)
-        - [限制调用](#限制调用)
-+ [异常处理](#异常处理)
-+ [数据共享](#数据共享)
+        * [让渡](#让渡)
+            * [yield](#yield)
+            * [sleep_for](#sleep_for)
+        * [限制调用](#限制调用)
+        * [核心绑定](#核心绑定)
+            * [软亲和性](#软亲和性)
+            * [硬亲和性](#硬亲和性)
+* [异常处理](#异常处理)
+* [数据共享](#数据共享)
     * [标准库提供的锁](#标准库提供的锁)
-        - [互斥量mutex](#互斥量mutex)
-            + [OOP设计](#oop设计)
+        * [互斥量mutex](#互斥量mutex)
+            * [OOP设计](#oop设计)
     * [条件竞争与死锁](#条件竞争与死锁)
-        - [条件竞争](#条件竞争)
-        - [死锁](#死锁)
-            + [死锁避免](#死锁避免)
+        * [条件竞争](#条件竞争)
+        * [死锁](#死锁)
+            * [死锁避免](#死锁避免)
     * [管理锁](#管理锁)
-        - [lock_guard](#lock_guard)
-        - [unique_lock](#unique_lock)
-+ [数据同步](#数据同步)
+        * [lock_guard](#lock_guard)
+        * [unique_lock](#unique_lock)
+* [数据同步](#数据同步)
     * [等待事件](#等待事件)
-        - [等待固定时间](#等待固定时间)
-        - [等待条件满足](#等待条件满足)
-            + [条件变量](#条件变量)
-            + [协作机制](#协作机制)
+        * [等待固定时间](#等待固定时间)
+        * [等待条件满足](#等待条件满足)
+            * [条件变量](#条件变量)
+            * [协作机制](#协作机制)
     * [异步执行](#异步执行)
-        - [std::async](#stdasync)
-        - [std::packaged_task](#stdpackaged_task)
-        - [future、promise、shared_future](#futurepromiseshared_future)
-            + [future与promise](#future与promise)
-            + [future与shared_future](#future与shared_future)
+        * [std::async](#stdasync)
+        * [std::packaged_task](#stdpackaged_task)
+        * [future、promise、shared_future](#futurepromiseshared_future)
+            * [future与promise](#future与promise)
+            * [future与shared_future](#future与shared_future)
     * [std::experimental](#stdexperimental)
-+ [时间与日期](#时间与日期)
+* [时间与日期](#时间与日期)
     * [std::chrono](#stdchrono)
-        - [clock 时钟](#clock-时钟)
-        - [duration 时长](#duration-时长)
-        - [time_point 时间点](#time_point-时间点)
+        * [clock 时钟](#clock-时钟)
+        * [duration 时长](#duration-时长)
+        * [time_point 时间点](#time_point-时间点)
     * [std::chrono_literals (c++14)](#stdchrono_literals-c14)
-+ [内存模型与原子操作](#内存模型与原子操作)
+* [内存模型与原子操作](#内存模型与原子操作)
     * [内存模型](#内存模型)
-        - [背景](#背景)
-        - [内存模型](#内存模型-1)
-            + [C++中的对象和内存位置](#c中的对象和内存位置)
-            + [抽象内存模型](#抽象内存模型)
-        - [干预重排：Barrier](#干预重排barrier)
-            + [Compiler Barrier](#compiler-barrier)
-            + [Runtime Barrier](#runtime-barrier)
+        * [背景](#背景)
+        * [内存模型](#内存模型-1)
+            * [C++中的对象和内存位置](#c中的对象和内存位置)
+            * [抽象内存模型](#抽象内存模型)
+        * [干预重排：Barrier](#干预重排barrier)
+            * [Compiler Barrier](#compiler-barrier)
+            * [Runtime Barrier](#runtime-barrier)
     * [原子类型](#原子类型)
-        - [标准原子类型](#标准原子类型)
-        - [指针原子类型std::atomic<T*>](#指针原子类型stdatomict)
-        - [自定义原子类型](#自定义原子类型)
+        * [标准原子类型](#标准原子类型)
+        * [指针原子类型std::atomic<T*>](#指针原子类型stdatomict)
+        * [自定义原子类型](#自定义原子类型)
     * [原子操作支持](#原子操作支持)
-        - [标准库中原子类型的操作支持](#标准库中原子类型的操作支持)
-        - [自由函数](#自由函数)
+        * [标准库中原子类型的操作支持](#标准库中原子类型的操作支持)
+        * [自由函数](#自由函数)
     * [memory_order](#memory_order)
-        - [顺序关系](#顺序关系)
-            + [sequenced-before](#sequenced-before)
-            + [happens-before](#happens-before)
-            + [synchronizes-with](#synchronizes-with)
-        - [六种memory_order](#六种memory_order)
-        - [三种内存模型](#三种内存模型)
-            + [Sequential Consistency](#sequential-consistency)
-            + [Release and Acquire](#release-and-acquire)
-            + [Relaxed](#relaxed)
-        - [注意事项](#注意事项)
+        * [顺序关系](#顺序关系)
+            * [sequenced-before](#sequenced-before)
+            * [happens-before](#happens-before)
+            * [synchronizes-with](#synchronizes-with)
+        * [六种memory_order](#六种memory_order)
+        * [三种内存模型](#三种内存模型)
+            * [Sequential Consistency](#sequential-consistency)
+            * [Release and Acquire](#release-and-acquire)
+            * [Relaxed](#relaxed)
+        * [注意事项](#注意事项)
     * [Fence](#fence)
-        - [atomic_thread_fence](#atomic_thread_fence)
-        - [std::atomic_signal_fence](#stdatomic_signal_fence)
-        - [mutex与fence](#mutex与fence)
-        - [memory_order与fence](#memory_order与fence)
-+ [Lock Free编程](#lock-free编程)
+        * [atomic_thread_fence](#atomic_thread_fence)
+        * [std::atomic_signal_fence](#stdatomic_signal_fence)
+        * [mutex与fence](#mutex与fence)
+        * [memory_order与fence](#memory_order与fence)
+* [Lock Free编程](#lock-free编程)
     * [无锁编程范式](#无锁编程范式)
-        - [函数式编程FP](#函数式编程fp)
-        - [CSP（Communicating Sequential Processer）](#cspcommunicating-sequential-processer)
-+ [高级线程管理](#高级线程管理)
+        * [函数式编程FP](#函数式编程fp)
+        * [CSP（Communicating Sequential Processer）](#cspcommunicating-sequential-processer)
+* [高级线程管理](#高级线程管理)
     * [线程池](#线程池)
-+ [并行算法(C++17)](#并行算法c17)
-+ [锁](#锁)
+* [并行算法(C++17)](#并行算法c17)
+* [锁](#锁)
     * [互斥锁](#互斥锁)
     * [自旋锁](#自旋锁)
     * [读写锁](#读写锁)
     * [悲观锁](#悲观锁)
     * [乐观锁](#乐观锁)
+* [多线程编程模式](#多线程编程模式)
+    * [主从模型](#主从模型)
+    * [生产-消费者模型](#生产-消费者模型)
+    * [高并发索引模型](#高并发索引模型)
 
 <!-- vim-markdown-toc -->
 
@@ -407,7 +414,7 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
      void f(std::promise<void> ps){
          ps.set_value();
      }
-      
+
      int main()
      {
          std::promise<void> ps;
@@ -522,7 +529,7 @@ x == y;//true
 3. 当提升单核能力来提高CPU性能的路越走越窄时，多核架构逐渐成为一条新的道路，多核中各核心都有自己的cache，还有不同层级的cache，彼此共享内存。每个CPU核在运行的时候，都会优先考虑离自己最近的Cache，一旦命中就直接使用Cache中的数据，每一层之间的Cache，数据常常是不一致的，而CPU去同步这些数据是需要消耗时间的。这就会造成某个CPU核修改了一个数据，没有同步的让其他核知道（CPU层面使用的是一套包括[MESI协议](https://my.oschina.net/u/4482993/blog/4690298)、store buffer、invalid queue等技术在内的数据同步方式）时又有其他核也要访问同一块内存，于是多个核心上的cache就存在了数据不一致的情况，必须等待CPU上的硬件算法完成数据的同步。
 
    ![多核下的一种cache架构](./img/concurrency/layer-cache.webp)
-   
+
    ![MESI状态转换](img/concurrency/mesi-status-machine.webp)
 
 + 由于以上这些原因CPU所运行的程序和我们编写的代码可能是不一致的，甚至，对于同一次执行，不同线程感知到其他线程的执行顺序可能都是不一样的。因此内存模型需要考虑到所有这些细节，以便让开发者可以精确控制以避免未定义的行为。
@@ -860,20 +867,20 @@ int main(){
   ```cpp
   std::atomic<bool> x,y;
   std::atomic<int> z;
-  
+
   void write_x_then_y(){
       x.store(true, std::memory_order_relaxed); // ①
       std::atomic_thread_fence(std::memory_order_release);
       y.store(true, std::memory_order_relaxed); // ②
   }
-  
+
   void read_y_then_x(){
       while(!y.load(std::memory_order_relaxed)); // ③
       std::atomic_thread_fence(std::memory_order_acquire);
       if(x.load(std::memory_order_relaxed))
           ++z;  // ④
   }
-  
+
   int main(){
       x.store(false), y.store(false), z.store(0);
       std::thread a(write_x_then_y), b(read_y_then_x);
