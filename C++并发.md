@@ -104,7 +104,7 @@
 
 ## 线程本地存储TLS
 
-TLS是一种**存储期(storage duration)**控制符，该类型对象在线程开始时分配并初始化（仅一次）、线程结束时回收，每个线程有该对象自己的实例副本，在和static或extern结合时会影响变量的链接属性。
+TLS是一种**存储期(storage duration)**控制符，该类型对象在线程开始时分配并初始化（仅一次）、线程结束时回收，**每个线程有该对象自己的实例副本**，在和static或extern结合时会影响变量的链接属性。
 
 ### thread_local
 
@@ -150,8 +150,8 @@ Thread: 139649599239744 entered
 
 ## thread对象
 
-+ C++11使用thread类来作为存储和管理线程数据的数据结构。
-+ thead和unique_ptr一样都是独占所有权的，都**只支持移动而不支持拷贝**
++ C++11使用`thread`类来作为存储和管理线程数据的数据结构。
++ `thead`和`unique_ptr`一样都是独占所有权的，都**只支持移动而不支持拷贝**
 + 每一个线程都有一个`std::thread::id`类型来作为唯一标识，可以通过`thread::get_id()和std::this_thread::get_id()`获取。
 + 不能以给旧线程合法赋新值的方式来让对象放弃对旧线程的所有权
 
@@ -166,7 +166,7 @@ Thread: 139649599239744 entered
 + 线程开始运行的时间是不确定的，这是由操作系统的调度策略决定的。它可能在决定线程运行方式的代码执行前就已经完成了线程的任务。
 
 1. thread::join():子线程会阻塞主线程的执行，只有当子线程结束后主线程才能继续执行。
-2. thread::datach():分离式启动线程，线程不会阻塞主线程的运行，子线程在后台运行，可用于创建守护线程。
+2. thread::detach():分离式启动线程，线程不会阻塞主线程的运行，子线程在后台运行，可用于创建守护线程。
 
 #### 参数传递
 
@@ -373,6 +373,13 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
    // wait和notify_all虽然是写在一个函数中的，但是在运行时它们是在多线程环境中执行的，因此对于这段代码，需要能够从不同线程的角度去思考代码的逻辑。
    ```
 
+|      API       | 对象 |      |
+| :------------: | :--: | :--: |
+| `notify_one()` |      |      |
+| `notify_all()` |      |      |
+
+
+
 ## 异步执行
 
 + 异步可以使耗时的操作不影响当前主线程的执行流，在线程内部再提高效率。标准库定义了以下数据结构以提供支持。
@@ -414,7 +421,7 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
      void f(std::promise<void> ps){
          ps.set_value();
      }
-
+      
      int main()
      {
          std::promise<void> ps;
@@ -437,72 +444,6 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 | 结果所有权 | 独享可移动、只能获取一次 | 可拷贝，多个shared_future对象可以引用同一结果。 |
 
 ## std::experimental
-
-# 时间与日期
-
-+ C++的时钟库有两个版本，一个是std::chrono库，一个是C样式的日期和时间库(如std::time_t)。
-
-## std::chrono
-
-### clock 时钟
-
-+ 标准库中提供了三种类型的时钟：
-  1. std::chrono::system_clock：本地系统的当前时间 (可以调整)，静态成员函数to_time_t()支持风格转换
-  2. std::chrono::steady_clock：不能被调整的，稳定增加的时间
-  3. std::chrono::high_resolution_clock：提供最高精度的计时周期，不同标准库实现的行为有差异
-+ 时钟类必须提供时间值、时间类型、时钟节拍和时钟稳定性**四种**信息
-
-### duration 时长
-
-+ 表示时间间隔的模板类，模板参数为节拍数量(Rep)和节拍精度(std::ratio<Num, Denom=1>：表示Num/Denom秒)。
-+ duration支持四则运算(基于时间的60进制)
-+ 标准库定义了常用的duration和ratio，可以直接使用。
-+ 标准库提供了duration_cast\<TYPE>(soutrce)实现duration类型的转换。
-
-```cpp
-std::chrono::nanoseconds    duration<long long, std::ratio<1, 1000000000>>
-std::chrono::microseconds   duration<long long, std::ratio<1, 1000000>>
-std::chrono::milliseconds   duration<long long, std::ratio<1, 1000>>
-std::chrono::seconds        duration<long long>
-std::chrono::minutes        duration<int, std::ratio<60>>
-std::chrono::hours          duration<int, std::ratio<3600>>
-
-typedef ratio<1,       1000000000000000000> atto;
-typedef ratio<1,          1000000000000000> femto;
-typedef ratio<1,             1000000000000> pico;
-typedef ratio<1,                1000000000> nano;
-typedef ratio<1,                   1000000> micro;
-typedef ratio<1,                      1000> milli;
-typedef ratio<1,                       100> centi;
-typedef ratio<1,                        10> deci;
-typedef ratio<                       10, 1> deca;
-typedef ratio<                      100, 1> hecto;
-typedef ratio<                     1000, 1> kilo;
-typedef ratio<                  1000000, 1> mega;
-typedef ratio<               1000000000, 1> giga;
-typedef ratio<            1000000000000, 1> tera;
-typedef ratio<         1000000000000000, 1> peta;
-typedef ratio<      1000000000000000000, 1> exa;
-```
-
-### time_point 时间点
-
-+ `std::chrono::time_point<clock, duration>`是一个表示距离时钟原点的具体时间点的类模板
-+ 支持加减duration，支持相互之间相减（值为duration）。
-
-## std::chrono_literals (c++14)
-
-+ std::chrono_literals通过字面运算符模板提供了时间的后缀支持。
-
-```cpp
-constexpr std::chrono::minutes operator ""min(unsigned long long m){
-    return std::chrono::minutes(m);
-}
-
-auto x = 45min;
-auto y = std::chrono::minutes(45);
-x == y;//true
-```
 
 # 内存模型与原子操作
 
@@ -867,20 +808,20 @@ int main(){
   ```cpp
   std::atomic<bool> x,y;
   std::atomic<int> z;
-
+  
   void write_x_then_y(){
       x.store(true, std::memory_order_relaxed); // ①
       std::atomic_thread_fence(std::memory_order_release);
       y.store(true, std::memory_order_relaxed); // ②
   }
-
+  
   void read_y_then_x(){
       while(!y.load(std::memory_order_relaxed)); // ③
       std::atomic_thread_fence(std::memory_order_acquire);
       if(x.load(std::memory_order_relaxed))
           ++z;  // ④
   }
-
+  
   int main(){
       x.store(false), y.store(false), z.store(0);
       std::thread a(write_x_then_y), b(read_y_then_x);
@@ -934,15 +875,15 @@ int main(){
 
 # 并行算法(C++17)
 
-+ 标准库将许多算法加入了sequenced_policy参数已启用算法的并行版本。[参考来源](https://paul.pub/cpp-concurrency)
++ 标准库将许多算法加入了`sequenced_policy`参数已启用算法的并行版本。[参考来源](https://paul.pub/cpp-concurrency)
 
-|          变量          |                   类型                   |                 作用                 |
-| :--------------------: | :--------------------------------------: | :----------------------------------: |
-|    `execution::seq`    |      `execution::sequenced_policy`       |    要求并行算法的执行可以不并行化    |
-|    `execution::par`    |       `execution::parallel_policy`       |     指示并行算法的执行可以并行化     |
-| `execution::par_unseq` | `execution::parallel_unsequenced_policy` | 指示并行算法的执行可以并行化、向量化 |
+|          变量          |                   类型                   |                         作用                         |
+| :--------------------: | :--------------------------------------: | :--------------------------------------------------: |
+|    `execution::seq`    |      `execution::sequenced_policy`       |                     顺序执行算法                     |
+|    `execution::par`    |       `execution::parallel_policy`       |            并行执行算法（通常使用线程池）            |
+| `execution::par_unseq` | `execution::parallel_unsequenced_policy` | 可以并行执行算法，并可以使用矢量命令（例如SSE，AVX） |
 
-# 锁
+​	# 锁
 
 加锁的目的就是保证共享资源在任意时间里，只有一个线程访问，这样就可以避免多线程导致共享数据错乱的问题。
 
