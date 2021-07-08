@@ -157,7 +157,7 @@ Thread: 139649599239744 entered
 
 ### 线程创建
 
-+ 支持从普通函数指针、lambda表达式、带有operator()函数的类的实例对象(**使用临时变量时注意C++的语法解析**)、类的函数(需提供类的实例化的对象的地址)来创建线程。
++ 支持从普通函数指针、`lambda`表达式、带有`operator()`函数的类的实例对象(**使用临时变量时注意C++的语法解析**)、类的函数(需提供类的实例化的对象的地址)来创建线程。
 + 线程所持有的资源会在线程正常退出的时候自动释放
 + 进程内可以创建的线程的数量是有限的，通过`thread::hardware_concurrency()`函数可以获取支持的线程的具体数量。
 
@@ -165,25 +165,36 @@ Thread: 139649599239744 entered
 
 + 线程开始运行的时间是不确定的，这是由操作系统的调度策略决定的。它可能在决定线程运行方式的代码执行前就已经完成了线程的任务。
 
-1. thread::join():子线程会阻塞主线程的执行，只有当子线程结束后主线程才能继续执行。
-2. thread::detach():分离式启动线程，线程不会阻塞主线程的运行，子线程在后台运行，可用于创建守护线程。
+1. `thread::join()`:子线程会阻塞主线程的执行，只有当子线程结束后主线程才能继续执行。
+2. `thread::detach()`:分离式启动线程，线程不会阻塞主线程的运行，子线程独立运行（可用于创建守护线程），其生命期随主线程结束。一旦线程被`detach()`，将不会有任何`thread`对象能够引用它。
 
 #### 参数传递
 
-+ 线程的参数传递经过了**两个过程（前者是拷贝传值，后置传递右值）**，一是由thread()构造函数传入thread对象的内部，二是由线程对象内部传递给实际执行线程函数参数。
-+ 只需要将需要传递的参数做为thread构造函数的参数即可实现传参，此时参数会被拷贝到线程对象的内存空间，然后在线程内部以右值的方式传递给线程函数
++ 线程的参数传递经过了**两个过程（前者是拷贝传值，后置传递右值）**，一是由`thread()`构造函数传入`thread`对象的内部，二是由线程对象内部传递给实际执行线程函数参数。
++ 只需要将需要传递的参数做为`thread`构造函数的参数即可实现传参，此时参数会被**拷贝**到线程对象的内存空间，然后在线程内部以右值的方式传递给线程函数
 
 ##### **NOTE**
 
 1. thread对象支持用带参数的函数初始化，但是参数中的默认参数会被忽略。
-2. 当确实需要以数据的引用方式传递参数时，需要使用std::ref(obj)来生成引用包裹以传递引用类型。
-3. 当thread传递不允许拷贝的参数时，可以对原始参数进行move操作以实现参数的正常传递
+
+2. 当确实需要以数据的引用方式传递参数时，需要使用`std::ref(obj)`来生成引用包裹以传递引用类型。
+
+3. 当`thread`传递不允许拷贝的参数时，可以对原始参数进行`move`操作以实现参数的正常传递
+
 4. 当参数使用到指针的时候要注意指针所指向的变量的生命周期
+
+```c++
+std::thread my_thread(background_task());///错误写法，会被解析为声明为一个函数
+///解析结果：thread my_thread(void (*background_task)(void));
+
+std::thread my_thread((background_task()));///正确写法
+std::thread my_thread{background_task()};///正确写法
+```
 
 ### 线程结束
 
 + 当线程对象超出作用域时，由于RAII的特性，线程对象的析构函数会被自动调用。
-+ 如果thread析构函数被调用时，线程对象还没有join()或者detach()，析构函数会调用`std::terminate()`从而导致进程异常退出。
++ 如果`thread`析构函数被调用时，线程对象还没有`join()`或者`detach()`，析构函数会调用`std::terminate()`从而导致进程异常退出。
 
 ## 线程管理
 
@@ -199,7 +210,7 @@ Thread: 139649599239744 entered
 
 ### 限制调用
 
-+ call_once(once_flag*, ...)：限制任务只能被多个线程累计执行一次
++ `call_once(once_flag*, ...)`：限制任务只能被多个线程累计执行一次
 
 ```cpp
 void init() {} //此函数只会被执行一次
@@ -392,26 +403,46 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
   | `shared_future<>` | 等待被异步设置的值（可能为其他 future 所引用） |
   |    `promise<>`    |          存储一个值以支持外部异步获取          |
 
-### std::async
+### `std::async`
 
-+ 通过std:sync()可以启动一个后台任务，sync()的全体参数由控制参数和运行参数两部分组成，控制参数控制具体的启动策略（是否启用新线程以及运行时机），运行参数传递给实际任务执行者，参数形式和thread对象的构造函数相同，传统方式也相同。
++ 通过`std:sync()`可以启动一个后台任务，`sync()`的全体参数由**控制参数和运行参数**两部分组成，控制参数控制具体的启动策略（是否启用新线程以及运行时机）；运行参数传递给实际任务执行者，参数形式和参数传递方式与`thread`对象的构造函数相同。
 
-+ 控制参数：std::launch类型，支持异或运算
++ 控制参数：`std::launch`类型，支持异或运算
 
   |          参数           |                             意义                             |
   | :---------------------: | :----------------------------------------------------------: |
   |  `std::launch::async`   |                 函数必须异步执行在其他线程上                 |
   | `std::launch::deferred` | `future`被需要时（`future`调用`get()、wait()`时）再执行函数。 |
 
-### std::packaged_task
++ 返回值：该函数返回`future<>`模板类的一个实例化对象，其值自动设置为来自于异步函数中的`return`语句中的值，不需要手动`set`。
+
+```c++
+int func(){
+    cout << "返回值 == " ;
+    return 169168;
+}
+
+auto f = std::async(func);
+cout << "开始执行异步任务：" << f.get() << endl;
+///开始执行异步任务：返回值 == 169168
+```
+
+### `std::packaged_task`
 
 + `std::packaged_task<>`是一个模板类，模板参数是一个函数签名，表示一个可调用对象（可封装为`std::fucntion`或者作为线程函数传递）。
 + 使用它可以将函数签名**类似**（类型可以不完全匹配，因为可以隐式类型转换）的任务（函数或者可调用对象）封装为一个可调用对象，调用该对象就会执行相关的任务。[命令模式](https://en.wikipedia.org/wiki/Command_pattern)
 + 通过`std::packaged_task<>`对象的`get_future()`成员函数可以获取对象被调用执行后的返回值（作为异步结果存储在`std::future`中）。
 
-### future、promise、shared_future
+```c++
+std::packaged_task<int(int,int)> task([](int a, int b) {return a+b; });
+std::future<int> result = task.get_future();
+task(2, 9);
+std::cout << "task_lambda:\t" << result.get() << '\n';///11
+```
 
-#### future与promise
+### `future、promise、shared_future`
+
+#### `future与promise`
 
 + `promise`可以和**一个**`future`关联绑定，两者配合可以实现一个通信机制（`future`阻塞线程等待数据，`promise`提供数据并将`future`置为就绪态）：
 
@@ -436,14 +467,14 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 + 都支持传递线程内部的异常，`future`以自动抛出异常，`promise`需要借助`promise::set_exception()`函数。
 
-#### future与shared_future
+#### `future`与`shared_future`
 
 |            |         `future`         |                 `shared_future`                 |
 | :--------: | :----------------------: | :---------------------------------------------: |
 |  事件关联  |   只能与指定的事件关联   |                可以关联多个事件                 |
 | 结果所有权 | 独享可移动、只能获取一次 | 可拷贝，多个shared_future对象可以引用同一结果。 |
 
-## std::experimental
+## `std::experimental`
 
 # 内存模型与原子操作
 
