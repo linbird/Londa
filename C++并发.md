@@ -108,7 +108,7 @@ TLS是一种**存储期(storage duration)**控制符，该类型对象在线程�
 
 ### thread_local
 
-命名空间下的全局变量，类的**static成员**变量，本地变量支持被申明为thread_local变量。**`static thread_local` 和 `thread_local` 声明是等价的**。
+命名空间下的全局变量，类的**static成员**变量，本地变量支持被申明为thread_local变量。**`static thread_local` 和 `thread_local` 声明是等价的**（类中的thread_local成员也由多个类所共享）。
 
 ```cpp
 thread_local int x;  //命名空间下的全局变量
@@ -452,7 +452,7 @@ std::cout << "task_lambda:\t" << result.get() << '\n';///11
      void f(std::promise<void> ps){
          ps.set_value();
      }
-      
+
      int main()
      {
          std::promise<void> ps;
@@ -839,20 +839,20 @@ int main(){
   ```cpp
   std::atomic<bool> x,y;
   std::atomic<int> z;
-  
+
   void write_x_then_y(){
       x.store(true, std::memory_order_relaxed); // ①
       std::atomic_thread_fence(std::memory_order_release);
       y.store(true, std::memory_order_relaxed); // ②
   }
-  
+
   void read_y_then_x(){
       while(!y.load(std::memory_order_relaxed)); // ③
       std::atomic_thread_fence(std::memory_order_acquire);
       if(x.load(std::memory_order_relaxed))
           ++z;  // ④
   }
-  
+
   int main(){
       x.store(false), y.store(false), z.store(0);
       std::thread a(write_x_then_y), b(read_y_then_x);
