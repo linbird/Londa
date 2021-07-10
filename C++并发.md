@@ -421,7 +421,7 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
      void f(std::promise<void> ps){
          ps.set_value();
      }
-
+      
      int main()
      {
          std::promise<void> ps;
@@ -808,20 +808,20 @@ int main(){
   ```cpp
   std::atomic<bool> x,y;
   std::atomic<int> z;
-
+  
   void write_x_then_y(){
       x.store(true, std::memory_order_relaxed); // ①
       std::atomic_thread_fence(std::memory_order_release);
       y.store(true, std::memory_order_relaxed); // ②
   }
-
+  
   void read_y_then_x(){
       while(!y.load(std::memory_order_relaxed)); // ③
       std::atomic_thread_fence(std::memory_order_acquire);
       if(x.load(std::memory_order_relaxed))
           ++z;  // ④
   }
-
+  
   int main(){
       x.store(false), y.store(false), z.store(0);
       std::thread a(write_x_then_y), b(read_y_then_x);
@@ -875,7 +875,11 @@ int main(){
 
 # 并行算法(C++17)
 
-+ 标准库将许多算法加入了`sequenced_policy`参数已启用算法的并行版本。[参考来源](https://paul.pub/cpp-concurrency)
+需要tbb库（[Intel Threading Building Blocks](https://github.com/intel/tbb)）提供支持。
+
+## [并行策略](https://www.bookstack.cn/read/CPP-Concurrency-In-Action-2ed-2019/content-chapter10-10.2-chinese.md)
+
++ 标准库将许多算法加入了`sequenced_policy`参数已启用算法的并行版本，该参数对算法只是一种权限，而非一种申请（即使指定了并行参数，算法依然可能是串行的）。[参考来源](https://paul.pub/cpp-concurrency)
 
 |          变量          |                   类型                   |                         作用                         |
 | :--------------------: | :--------------------------------------: | :--------------------------------------------------: |
@@ -883,7 +887,47 @@ int main(){
 |    `execution::par`    |       `execution::parallel_policy`       |            并行执行算法（通常使用线程池）            |
 | `execution::par_unseq` | `execution::parallel_unsequenced_policy` | 可以并行执行算法，并可以使用矢量命令（例如SSE，AVX） |
 
-​	# 锁
+这些策略将会影响算法，算法的行为受到执行策略的控制。算法会更加复杂化，影响抛出异常时的行为，影响算法执行的位置、方式和时间。
+
+## 并行算法
+
+标准库中的大多数被执行策略重载的算法都在<algorithm>和<numeric>头文件中。包括有：
+
+遍历：`for_each，for_each_n`
+
+生成/填充：`fill，fill_n`，`generate，generate_n`
+
+查找：`find，find_if，find_end，find_first_of，adjacent_find`，`search，search_n`
+
+替换：`replace，replace_if，replace_copy，replace_copy_if`
+
+删除：`remove，remove_if，remove_copy，remove_copy_if`
+
+集合：`includes，set_union，set_intersection，set_difference，set_symmetric_difference`
+
+堆： `is_heap，is_heap_until`
+
+第K： `min_element，max_element，minmax_element，nth_element`
+
+排序： `sort，stable_sort，partial_sort，partial_sort_copy，is_sorted，is_sorted_until`
+
+统计：`count，count_if，all_of，any_of，none_of`
+
+划分：`is_partitioned，partition，stable_partition`
+
+比较：`mismatch，equal，unique，lexicographical_compare`
+
+复制/移动：`copy，copy_n，copy_if，move，swap_ranges，unique_copy ，reverse_copy，rotate_copy，partition_copy`
+
+变换：`transform，reverse，rotate，transform_reduce`
+
+合并： `merge，inplace_merge`
+
+遍历计算：`reduce，exclusive_scan，inclusive_scan，transform_exclusive_scan，transform_inclusive_scan，adjacent_difference `。
+
+
+
+# 锁
 
 加锁的目的就是保证共享资源在任意时间里，只有一个线程访问，这样就可以避免多线程导致共享数据错乱的问题。
 
