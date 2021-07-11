@@ -1,5 +1,6 @@
 #include <functional>
 #include <any>
+#include <ios>
 #include <iostream>
 #include <numeric>
 #include <execution>
@@ -93,14 +94,16 @@ template <class Generator, class Distribution, typename DataType = int, int leng
         }
 
 
-        template<typename ReturnType = void, class Operation_or_Policy> ReturnType benchmark_entry(Operation_or_Policy && operation_or_policy){
+        template<typename ReturnType = void, class Operation_or_Policy> ReturnType benchmark_entry(Operation_or_Policy&& operation_or_policy){
             std::cout << fmt::format("使用策略/方法的签名：{}  ", typeid(operation_or_policy).name());
             my_timer<std::chrono::high_resolution_clock, std::chrono::milliseconds> timer;
             if constexpr(std::is_void<ReturnType>::value){
                 operation_or_policy();
                 return;
             }else{
-                ReturnType res = operation_or_policy(std::forward<Operation_or_Policy&&>(operation_or_policy), data.begin(), data.end());
+                std::cout << std::boolalpha << std::is_lvalue_reference<decltype(operation_or_policy)>::value << std::endl;
+//                ReturnType res = std::reduce(std::forward<Operation_or_Policy&&>(operation_or_policy), data.begin(), data.end());
+                auto res = 0;
                 return res;
             }
         }
