@@ -956,8 +956,6 @@ int main(){
 
 遍历计算：`reduce，exclusive_scan，inclusive_scan，transform_exclusive_scan，transform_inclusive_scan，adjacent_difference `。
 
-
-
 # 锁
 
 加锁的目的就是保证共享资源在任意时间里，只有一个线程访问，这样就可以避免多线程导致共享数据错乱的问题。
