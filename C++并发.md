@@ -168,10 +168,9 @@ Thread: 139649599239744 entered
 1. `thread::join()`:子线程会阻塞主线程的执行，只有当子线程结束后主线程才能继续执行。
 2. `thread::detach()`:分离式启动线程，线程不会阻塞主线程的运行，子线程独立运行（可用于创建守护线程），其生命期随主线程结束。一旦线程被`detach()`，将不会有任何`thread`对象能够引用它。
 
-#### 参数传递
+#### 参数传入
 
-+ 线程的参数传递经过了**两个过程（前者是拷贝传值，后置传递右值）**，一是由`thread()`构造函数传入`thread`对象的内部，二是由线程对象内部传递给实际执行线程函数参数。
-+ 只需要将需要传递的参数做为`thread`构造函数的参数即可实现传参，此时参数会被**拷贝**到线程对象的内存空间，然后在线程内部以右值的方式传递给线程函数
+线程的参数传递经过了**两个过程（前者是拷贝传值，后者传递右值）**，一是由`thread()`构造函数传入`thread`对象的内部，二是由线程对象内部传递给实际执行线程函数参数。只需要将需要传递的参数做为`thread`构造函数的参数即可实现传参，此时参数会被**拷贝**到线程对象的内存空间，然后在线程内部以右值的方式传递给线程函数。
 
 ##### **NOTE**
 
@@ -190,6 +189,10 @@ std::thread my_thread(background_task());///错误写法，会被解析为声明
 std::thread my_thread((background_task()));///正确写法
 std::thread my_thread{background_task()};///正确写法
 ```
+
+#### 获取返回
+
+`std::thread`无法返回值，要想获得返回值需要借助异步执行返回的`future<>`来间接获取返回值。
 
 ### 线程结束
 
@@ -347,12 +350,12 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 ### 等待固定时间
 
-1. 等待一个时间段：*_for()类函数。
-2. 等待某一个时间点：*_until()类函数。
+1. 等待一个时间段：`*_for()`类函数。
+2. 等待某一个时间点：`*_until()`类函数。
 
-### 等待条件满足
+### 等待条件满足：条件变量
 
-#### 条件变量
+#### 条件变量类型
 
 + 当一个线程所需要的条件不满足时，线程会等待到条件满足时再执行。条件变量提供了一个可以让多个线程间同步协作的功能。
 
@@ -363,7 +366,7 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 | `notify_all_at_thread_exit` | 安排到在此线程完全结束时对 notify_all 的调用 |
 |         `cv_status`         |       列出条件变量上定时等待的可能结果       |
 
-#### 协作机制
+#### 条件变量协作机制
 
 + 条件变量的`wait()`和`notify*()`共同构成了线程间互相协作的基础。
 
@@ -384,37 +387,64 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
    // wait和notify_all虽然是写在一个函数中的，但是在运行时它们是在多线程环境中执行的，因此对于这段代码，需要能够从不同线程的角度去思考代码的逻辑。
    ```
 
-|      API       | 对象 |      |
-| :------------: | :--: | :--: |
-| `notify_one()` |      |      |
-| `notify_all()` |      |      |
+|      API       |               对象               |                      锁                      |
+| :------------: | :------------------------------: | :------------------------------------------: |
+| `notify_one()` | 只唤醒**等待队列中的第一个线程** |                 不存在锁争用                 |
+| `notify_all()` | 唤醒等待队列中**阻塞的所有线程** | 只有一个线程获取锁、未获取锁的将一直尝试获取 |
 
+```c++
+std::mutex mtx;
+std::condition_variable cv;
+bool ready = false;
+ 
+void print_id(int id) {
+	std::unique_lock<std::mutex> lck(mtx);
+	while (!ready) cv.wait(lck);
+	std::cout << "thread " << id << '\n';
+}
+ 
+void go() {
+	std::unique_lock<std::mutex> lck(mtx);
+	ready = true;
+	cv.notify_all(); ///10个线程都会乱序依次执行
+//    cv.notify_one();///只有一个线程执行，该线程执行完释放锁，这时锁已经处理非锁定状态，但是其余线程依旧处于阻塞状态。
+}
+ 
+std::thread threads[10];
+for (int i = 0; i < 10; ++i)
+	threads[i] = std::thread(print_id, i);
+std::cout << "10 threads ready to race...\n";
+go();
+for (auto& th : threads) th.join();
+return 0;
+```
 
+线程阻塞在`condition_variable`时，它是**等待`notify_one()`或者`notify_all()`来唤醒，而不是等待锁**可以被锁定来唤醒。
 
 ## 异步执行
 
 + 异步可以使耗时的操作不影响当前主线程的执行流，在线程内部再提高效率。标准库定义了以下数据结构以提供支持。
 
-  |        类         |                      作用                      |
-  | :---------------: | :--------------------------------------------: |
-  |      `async`      | 异步运行一个函数，返回运行结果到`std::future`  |
-  | `packaged_task<>` |    打包一个函数，存储其返回值以进行异步获取    |
-  |    `future<>`     |               存储被异步设置的值               |
-  | `shared_future<>` | 等待被异步设置的值（可能为其他 future 所引用） |
-  |    `promise<>`    |          存储一个值以支持外部异步获取          |
+  |        类         |   说明   |                       作用                       |
+  | :---------------: | :------: | :----------------------------------------------: |
+  |      `async`      | 模板函数 |  异步运行一个函数，返回运行结果到`std::future`   |
+  | `packaged_task<>` |  模板类  |     打包一个函数，存储其返回值以进行异步获取     |
+  |    `future<>`     |  模板类  |                存储被异步设置的值                |
+  | `shared_future<>` |  模板类  | 等待被异步设置的值（可能为其他 `future` 所引用） |
+  |    `promise<>`    |  模板类  |           存储一个值以支持外部异步获取           |
 
 ### `std::async`
 
-+ 通过`std:sync()`可以启动一个后台任务，`sync()`的全体参数由**控制参数和运行参数**两部分组成，控制参数控制具体的启动策略（是否启用新线程以及运行时机）；运行参数传递给实际任务执行者，参数形式和参数传递方式与`thread`对象的构造函数相同。
++ 通过`std:async()`可以启动一个后台任务，`async()`的全体参数由**控制参数和运行参数**两部分组成，控制参数控制具体的启动策略（是否启用新线程以及运行时机）；运行参数传递给实际任务执行者，参数形式和参数传递方式与`thread`对象的构造函数相同。
 
-+ 控制参数：`std::launch`类型，支持异或运算
++ 控制参数：`std::launch`类型，支持异或运算，默认为`std::launch::async|std::launch::deferred`。
 
   |          参数           |                             意义                             |
   | :---------------------: | :----------------------------------------------------------: |
-  |  `std::launch::async`   |                 函数必须异步执行在其他线程上                 |
-  | `std::launch::deferred` | `future`被需要时（`future`调用`get()、wait()`时）再执行函数。 |
+  |  `std::launch::async`   |          **异步求值**：函数必须异步执行在其他线程上          |
+  | `std::launch::deferred` | **惰性求值**：`future`被需要时（`future`调用`get()、wait()`时）再执行函数 |
 
-+ 返回值：该函数返回`future<>`模板类的一个实例化对象，其值自动设置为来自于异步函数中的`return`语句中的值，不需要手动`set`。
++ 返回值：该函数返回`future<>`模板类的一个实例化对象，其值来自于异步函数中的`return`语句，由`async<>()`自动设置。
 
 ```c++
 int func(){
@@ -422,48 +452,54 @@ int func(){
     return 169168;
 }
 
-auto f = std::async(func);
+auto f = std::async(std::launch::deferred, func);
 cout << "开始执行异步任务：" << f.get() << endl;
 ///开始执行异步任务：返回值 == 169168
 ```
 
 ### `std::packaged_task`
 
-+ `std::packaged_task<>`是一个模板类，模板参数是一个函数签名，表示一个可调用对象（可封装为`std::fucntion`或者作为线程函数传递）。
-+ 使用它可以将函数签名**类似**（类型可以不完全匹配，因为可以隐式类型转换）的任务（函数或者可调用对象）封装为一个可调用对象，调用该对象就会执行相关的任务。[命令模式](https://en.wikipedia.org/wiki/Command_pattern)
-+ 通过`std::packaged_task<>`对象的`get_future()`成员函数可以获取对象被调用执行后的返回值（作为异步结果存储在`std::future`中）。
+`std::packaged_task<函数签名>`模板类将函数签名**类似**（类型可以不完全匹配，因为可以隐式类型转换）的任务（函数、`bind`表达式或者其他可调用对象）封装为一个新的支持异步调用的可调用对象（该对象可以作为普通函数进行调用，也可以用于初始化线程对象）。但是`packaged_task<>`**本身并不提供异步执行**的机制，异步执行的实现需要借助`thread`的执行。
+
+该对象内部**包含存储的任务和共享状态**两种元素，通过调用该对象就会自动调用`packaged_tak<>::operator()`执行相关的任务（设计模式：[命令模式](https://en.wikipedia.org/wiki/Command_pattern)）。当存储的任务在某个时刻将共享状态设置为就绪后，将异步的自动将共享状态设置到通过`std::packaged_task<>::get_future()`绑定的对象`std::future<>`中，通过`future::get()`可以获取异步执行的返回信息。
+
+该模板类**禁用拷贝赋值、拷贝构造；支持移动赋值、移动构造**（有参构造函数均需要右值引用参数）。通过`reset`清除共享状态、重新绑定`future<>`，可以多次执行`package_tak<>::operator()`。
 
 ```c++
 std::packaged_task<int(int,int)> task([](int a, int b) {return a+b; });
-std::future<int> result = task.get_future();
+
+std::future<int> ret = task.get_future();///绑定future
 task(2, 9);
-std::cout << "task_lambda:\t" << result.get() << '\n';///11
+std::cout << "task_thread:\t" << ret.get() << '\n';///获取异步结果：11
+
+task.reset();///重置共享状态
+ret = task.get_future();///重新绑定future
+std::thread(std::move(task), 12, 10).join(); ///线程式调用，由于package_task不支持复制类操作，所以得用move
+std::cout << "task_thread:\t" << ret.get() << '\n';///获取异步结果：22
 ```
 
 ### `future、promise、shared_future`
 
 #### `future与promise`
 
-+ `promise`可以和**一个**`future`关联绑定，两者配合可以实现一个通信机制（`future`阻塞线程等待数据，`promise`提供数据并将`future`置为就绪态）：
++ `promise`可以和**一个**`future`关联绑定，两者配合可以实现一个通信机制（`future`阻塞线程等待数据，`promise`提供数据并将`future`置为就绪态）：将`promise`对象传入到线程内部并在内部设置值，线程外部通过的`std::promise::get_future()`成获取与之相关的`std::future`对象的值。
 
-  1. 将`promise`对象传入到线程内部并在内部设置值，线程外部通过的`std::promise::get_future()`成获取与之相关的`std::future`对象的值。
-
-     ```cpp
-     void f(std::promise<void> ps){
-         ps.set_value();
-     }
-      
-     int main()
-     {
-         std::promise<void> ps;
-         auto ft = ps.get_future();
-     //    auto ft2 = ps.get_future(); // 抛出std::future_error异常
-         std::thread t(f, std::move(ps));
-         ft.wait(); // 阻塞直到set_value，相当于没有返回值的get
-         t.join();
-         return 0;
-     }
-     ```
+  ```cpp
+  void f(std::promise<void> ps){
+      ps.set_value();
+  }
+   
+  int main()
+  {
+      std::promise<void> ps;
+      auto ft = ps.get_future();
+  //    auto ft2 = ps.get_future(); // 抛出std::future_error异常
+      std::thread t(f, std::move(ps));
+      ft.wait(); // 阻塞直到set_value，相当于没有返回值的get
+      t.join();
+      return 0;
+  }
+  ```
 
 + 都支持传递线程内部的异常，`future`以自动抛出异常，`promise`需要借助`promise::set_exception()`函数。
 
@@ -1000,3 +1036,9 @@ int main(){
 ## 生产-消费者模型
 
 ## 高并发索引模型
+
+
+
+# 其它推荐
+
+[模拟实现`std::future`](http://blog.xnnyygn.in/cpp11-std-thread-input-and-output1/)
