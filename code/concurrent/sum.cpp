@@ -93,15 +93,31 @@ template <class Generator, class Distribution, typename DataType = int, int leng
             //            }
             //            return static_cast<ReturnType>(data.front());
             std::vector<DataType> local_date(data);
+//            while (local_date.size() >= batch_size) {
+//                auto base = local_date.begin();
+//                std::vector<DataType> next_data;
+//                int offset = batch_size;
+//                while(offset < batch_size){
+//                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<decltype(base)>, this, base, base + offset);
+//                    offset = std::min(batch_size, static_cast<int>(std::distance(base, local_date.end())));
+//                    base = base + offset;
+//                    next_data.push_back(std::move(ret.get()));
+//                    std::cout << fmt::format("数据块之和={}\n", next_data.back());
+//                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+//                }
+//                local_date.swap(next_data);
+//            }
             while (local_date.size() >= batch_size) {
                 auto base = local_date.begin();
                 std::vector<DataType> next_data;
                 int offset = batch_size;
-                while(offset < batch_size){
-                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum, this, base, base + offset);
-                    next_data.push_back(std::move(ret.get()));
-                    offset = std::min(batch_size, static_cast<int>(std::distance(base, local_date.end())));
+                while(offset != 0){
+                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<decltype(base)>, this, base, base + offset);
+                    offset = std::max(0, std::min(batch_size, static_cast<int>(std::distance(base, local_date.end()))));
                     base = base + offset;
+                    next_data.push_back(std::move(ret.get()));
+//                    std::cout << fmt::format("数据块之和={}\n", next_data.back());
+//                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 }
                 local_date.swap(next_data);
             }
@@ -157,6 +173,6 @@ template <class Generator, class Distribution, typename DataType = int, int leng
 int main(){
     //std::cout << TMP<decltype(std::mt19937), decltype(std::uniform_real_distribution), double, 1000000>()(12) << std::endl;
     //std::cout << TMP<std::mt19937, std::uniform_real_distribution<double>, double, 10'000'000>()(12) << std::endl;
-    TMP<std::mt19937, std::uniform_real_distribution<double>, double, 10'000'000>()(12);
+    TMP<std::mt19937, std::uniform_real_distribution<int>, double, 100'000'000>()(12);
     return 0;
 }
