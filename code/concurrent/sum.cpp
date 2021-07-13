@@ -173,6 +173,6 @@ template <class Generator, class Distribution, typename DataType = int, int leng
 int main(){
     //std::cout << TMP<decltype(std::mt19937), decltype(std::uniform_real_distribution), double, 1000000>()(12) << std::endl;
     //std::cout << TMP<std::mt19937, std::uniform_real_distribution<double>, double, 10'000'000>()(12) << std::endl;
-    TMP<std::mt19937, std::uniform_real_distribution<int>, double, 100'000'000>()(12);
+    TMP<std::mt19937, std::uniform_real_distribution<double>, double, 100'000'000>()(12);
     return 0;
 }
