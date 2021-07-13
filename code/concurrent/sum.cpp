@@ -98,7 +98,8 @@ template <class Generator, class Distribution, typename DataType = int, int leng
                 std::vector<DataType> next_data;
                 int offset = batch_size;
                 while(offset < batch_size){
-                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum, this, base, base + offset);
+                    using Iterator_Category = decltype(base);
+                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<Iterator_Category>, this, base, base + offset);
                     next_data.push_back(std::move(ret.get()));
                     offset = std::min(batch_size, static_cast<int>(std::distance(base, local_date.end())));
                     base = base + offset;
