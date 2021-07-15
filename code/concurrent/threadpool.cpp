@@ -1,8 +1,16 @@
+#include <atomic>
+#include <atomic>
 #include <mutex>
+#include <iostream>
+#include <fmt/core.h>
+#include <fmt/ostream.h>
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <queue>
 #include <thread>
+
+using namespace std::chrono_literals;
 
 class fixed_thread_pool {
     public:
@@ -58,3 +66,27 @@ class fixed_thread_pool {
         };
         std::shared_ptr<data> data_;
 };
+
+static std::atomic<int> global_data(100);
+
+void print(){
+//    std::this_thread::sleep_for(10ms);
+//    std::cout << fmt::format("线程ID={}，输出值={}\n", std::this_thread::get_id(), global_data.fetch_add(1));
+    std::cout << fmt::format("线程ID={}，输出值={}\n", std::this_thread::get_id(), global_data++);
+//    std::this_thread::sleep_for(10ms);
+}
+
+int main(){
+    fixed_thread_pool thread_pool(std::thread::hardware_concurrency()-1);
+    for(int i = 1; i < 16; ++i){
+        thread_pool.execute(print);
+
+        thread_pool.execute(std::move([i]() -> void{
+//            std::this_thread::sleep_for(10ms);
+            std::cout << fmt::format("线程ID={}，输出值={}\n", std::this_thread::get_id(), i);
+                    }));
+std::this_thread::sleep_for(10ms);
+    }
+//    std::this_thread::sleep_for(1s);
+    return 0;
+}
