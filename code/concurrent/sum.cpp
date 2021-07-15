@@ -80,7 +80,6 @@ template <class Generator, class Distribution, typename DataType = int, int leng
 
 
         template<typename ReturnType> ReturnType manual_mt(int thread_count, int batch_size, int size_threshold){
-            using Iterator_Category = decltype(data.begin());
             int maximum_thread = std::thread::hardware_concurrency();
             if(thread_count >= maximum_thread){
                 std::cout << "该处理器支持的并行线程为" << maximum_thread << "，已自动调整参数" << std::endl;
@@ -88,49 +87,42 @@ template <class Generator, class Distribution, typename DataType = int, int leng
             }
             std::cout << fmt::format("运行参数：数据规模={}，最大线程数量={}，每线程处理数据量={}", data.size(), thread_count, batch_size) << std::endl;
 
-//            auto test = [](int a, int b) -> int {return a+b;};
-//std::packaged_task<int(int, int)> task(&TMP::test);
-std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2));
-//            auto task3 = std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2);
-//            std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(&TMP::partial_sum<Iterator_Category>);
-//std::cout << std::boolalpha << task.valid() << std::endl; // false
-//            auto base = data.begin();
-//            while(data.size() > size_threshold){
-//                std::vector<DataType> tmp;
-//                for(int start = 0; start ; start += size_threshold){
-//                    std::future<DataType> res = task.get_future();
-//                    task(base + start, base + start+size_threshold);
-//                    tmp.push_back(std::move(res.get()));
-//                    task.reset();
-//                }
-//                tmp.swap(data);
-//            }
-            auto res = task.get_future();
-            std::thread(std::move(task), data.begin(), data.end()).detach();///缺陷：由于需要在每个线程里都要使用task构建thread，因此task可能需要被反复构建
-            std::cout << res.get() << std::endl;
-            return static_cast<ReturnType>(data.front());
-
-//            std::vector<DataType> local_date(data);
-//            while (local_date.size() >= batch_size) {
-//                auto base = local_date.begin();
-//                std::vector<DataType> next_data;
-//                int offset = batch_size;
-//                while(offset != 0){
-//                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<decltype(base)>, this, base, base + offset);
-//                    offset = std::max(0, std::min(batch_size, static_cast<int>(std::distance(base, local_date.end()))));
-//                    base = base + offset;
-//                    next_data.push_back(std::move(ret.get()));
-////                    std::cout << fmt::format("数据块之和={}\n", next_data.back());
-////                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-//                }
-//                local_date.swap(next_data);
-//            }
-//            return std::accumulate(local_date.begin(), local_date.end(), static_cast<DataType>(0));
+            std::vector<DataType> local_date(data);
+            while (local_date.size() >= batch_size) {
+                int epoch_count = std::ceil(local_date.size()/batch_size);
+                int epoch_last = local_date.size()%batch_size;
+                int offset = (epoch_last == 0)? batch_size: epoch_last;
+                auto start = local_date.begin();
+                using Iterator_Category = decltype(start);
+/*
+                std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2));
+//            auto res = task.get_future();
+//            std::thread(std::move(task), data.begin(), data.end()).detach();///缺陷：由于需要在每个线程里都要使用task构建thread，因此task可能需要被反复构建
+//            std::cout << res.get() << std::endl;
+                std::vector<DataType> next_data;
+                do{
+                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<Iterator_Category>, this, start, start + offset);
+                    start = start + offset;
+                    offset = batch_size;
+                    next_data.push_back(std::move(ret.get()));
+                }while(--epoch_count);
+                local_date.swap(next_data);
+            }
+*/
+                std::vector<DataType> next_data;
+                do{
+                    std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2));
+                    std::future<DataType> ret = task.get_future();
+                    std::thread(std::move(task), data.begin(), data.end()).detach();///缺陷：由于需要在每个线程里都要使用task构建thread，因此task可能需要被反复构建
+                    start = start + offset;
+                    offset = batch_size;
+                    next_data.push_back(std::move(ret.get()));
+                }while(--epoch_count);
+                local_date.swap(next_data);
+            }
+            return std::accumulate(local_date.begin(), local_date.end(), static_cast<DataType>(0));
         }
 
-        static int test(int a, int b){
-            return a + b;
-        }
 
         template<typename ReturnType = void, class Operation_or_Policy> ReturnType benchmark_entry(Operation_or_Policy&& operation_or_policy){
             std::cout << fmt::format("使用策略/方法的签名：{}  ", typeid(operation_or_policy).name())  << std::endl;
@@ -155,11 +147,7 @@ std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bin
                 return res;
             }
         }
-
-        template<typename ForwardIterator> DataType partial_sum(ForwardIterator begin, ForwardIterator end){
-            return std::accumulate(begin, end, static_cast<DataType>(0));
-        }
-
+//
 //        ///传入可调用的函数对象
 //        template<typename ReturnType, class Operation> ReturnType benchmark_mt(Operation&& operation){
 //            auto start = std::chrono::high_resolution_clock::now();
@@ -174,11 +162,16 @@ std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bin
 //            auto end = std::chrono::high_resolution_clock::now();
 //            std::cout << fmt::format("并行加法使用{}策略，耗时{}ms，结果为{}", typeid(ExecutionPolicy).name(), std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() , res) << std::endl;
 //        }
+
+        template<typename ForwardIterator> DataType partial_sum(ForwardIterator begin, ForwardIterator end){
+            return std::accumulate(begin, end, static_cast<DataType>(0));
+        }
 };
+
 
 int main(){
     //std::cout << TMP<decltype(std::mt19937), decltype(std::uniform_real_distribution), double, 1000000>()(12) << std::endl;
     //std::cout << TMP<std::mt19937, std::uniform_real_distribution<double>, double, 10'000'000>()(12) << std::endl;
-    TMP<std::mt19937, std::uniform_real_distribution<double>, double, 100'000'000>()(12);
+    TMP<std::mt19937, std::uniform_real_distribution<double>, double, 10'000'000>()(12);
     return 0;
 }
