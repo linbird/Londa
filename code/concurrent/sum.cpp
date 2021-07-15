@@ -62,7 +62,7 @@ template <class Generator, class Distribution, typename DataType = int, int leng
         }
 
         void operator()(int thread_count){
-            int batch_size = 10'000, size_threshold = 100;
+            int batch_size = 30'00, size_threshold = 100;
             std::function<DataType(int, int, int)> action = std::bind(&TMP<Generator, Distribution, DataType, length>::manual_mt<DataType>, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
             auto hook = [&action, thread_count, batch_size, size_threshold](){return action(thread_count, batch_size, size_threshold);};
 //            auto res = benchmark_mt<DataType, decltype(hook)>(std::move(hook));
@@ -89,16 +89,13 @@ template <class Generator, class Distribution, typename DataType = int, int leng
 
             std::vector<DataType> local_date(data);
             while (local_date.size() >= batch_size) {
-                int epoch_count = std::ceil(local_date.size()/batch_size);
+                int epoch_count = std::ceil(local_date.size()/static_cast<float>(batch_size));
                 int epoch_last = local_date.size()%batch_size;
                 int offset = (epoch_last == 0)? batch_size: epoch_last;
                 auto start = local_date.begin();
                 using Iterator_Category = decltype(start);
 /*
-                std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2));
-//            auto res = task.get_future();
-//            std::thread(std::move(task), data.begin(), data.end()).detach();///缺陷：由于需要在每个线程里都要使用task构建thread，因此task可能需要被反复构建
-//            std::cout << res.get() << std::endl;
+                /// async异步串行实现
                 std::vector<DataType> next_data;
                 do{
                     std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<Iterator_Category>, this, start, start + offset);
@@ -109,16 +106,21 @@ template <class Generator, class Distribution, typename DataType = int, int leng
                 local_date.swap(next_data);
             }
 */
+
+/*
                 std::vector<DataType> next_data;
                 do{
                     std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2));
                     std::future<DataType> ret = task.get_future();
-                    std::thread(std::move(task), data.begin(), data.end()).detach();///缺陷：由于需要在每个线程里都要使用task构建thread，因此task可能需要被反复构建
+                    std::thread(std::move(task), start, start + offset).detach();///缺陷：由于需要在每个线程里都要使用task构建thread，因此task可能需要被反复构建
                     start = start + offset;
                     offset = batch_size;
                     next_data.push_back(std::move(ret.get()));
                 }while(--epoch_count);
                 local_date.swap(next_data);
+*/
+
+
             }
             return std::accumulate(local_date.begin(), local_date.end(), static_cast<DataType>(0));
         }
@@ -147,21 +149,6 @@ template <class Generator, class Distribution, typename DataType = int, int leng
                 return res;
             }
         }
-//
-//        ///传入可调用的函数对象
-//        template<typename ReturnType, class Operation> ReturnType benchmark_mt(Operation&& operation){
-//            auto start = std::chrono::high_resolution_clock::now();
-//            auto res = operation();
-//            auto end = std::chrono::high_resolution_clock::now();
-//            std::cout << fmt::format("并行加法使用{}策略，耗时{}ms，结果为{}", typeid(ExecutionPolicy).name(), std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() , res) << std::endl;
-//        }
-//
-//        template<typename ReturnType = void, class ExecutionPolicy> ReturnType benchmark(ExecutionPolicy&& policy){
-//            auto start = std::chrono::high_resolution_clock::now();
-//            auto res = std::reduce(std::forward<ExecutionPolicy&&>(policy), data.begin(), data.end());
-//            auto end = std::chrono::high_resolution_clock::now();
-//            std::cout << fmt::format("并行加法使用{}策略，耗时{}ms，结果为{}", typeid(ExecutionPolicy).name(), std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count() , res) << std::endl;
-//        }
 
         template<typename ForwardIterator> DataType partial_sum(ForwardIterator begin, ForwardIterator end){
             return std::accumulate(begin, end, static_cast<DataType>(0));
@@ -172,6 +159,6 @@ template <class Generator, class Distribution, typename DataType = int, int leng
 int main(){
     //std::cout << TMP<decltype(std::mt19937), decltype(std::uniform_real_distribution), double, 1000000>()(12) << std::endl;
     //std::cout << TMP<std::mt19937, std::uniform_real_distribution<double>, double, 10'000'000>()(12) << std::endl;
-    TMP<std::mt19937, std::uniform_real_distribution<double>, double, 10'000'000>()(12);
+    TMP<std::mt19937, std::uniform_real_distribution<double>, double, 1'000'000>()(12);
     return 0;
 }
