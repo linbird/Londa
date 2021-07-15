@@ -2,6 +2,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <any>
+#include <ctime>
 #include <ios>
 #include <iostream>
 #include <numeric>
@@ -190,12 +191,16 @@ template <class Generator, class Distribution, typename DataType = int, int leng
                 do{
                     std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2));
                     threadpool.execute([&task, start, offset, &next_data](){
-                        std::cout << fmt::format("线程{}开始工作", std::this_thread::get_id()) << std::endl;
+                            std::chrono::system_clock::time_point current_t = std::chrono::system_clock::now();
+                            std::time_t currett_time = std::chrono::system_clock::to_time_t(current_t);
+std::cout << fmt::format("{}\t线程{}开始工作", std::ctime(&currett_time),std::this_thread::get_id()) << std::endl;
 //std::future<DataType> ret = task.get_future();
 //                        task(start, start+offset);
 //next_data.push_back(std::move(ret.get()));
                         std::this_thread::sleep_for(100ms);
-                        std::cout << fmt::format("线程{}结束工作", std::this_thread::get_id()) << std::endl;
+                            current_t = std::chrono::system_clock::now();
+                            currett_time = std::chrono::system_clock::to_time_t(current_t);
+std::cout << fmt::format("{}: \t线程{}结束工作", std::ctime(&currett_time),std::this_thread::get_id()) << std::endl;
                     });
                     start = start + offset;
                     offset = batch_size;
