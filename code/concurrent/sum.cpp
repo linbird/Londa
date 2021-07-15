@@ -94,16 +94,18 @@ template <class Generator, class Distribution, typename DataType = int, int leng
             //            return static_cast<ReturnType>(data.front());
             std::vector<DataType> local_date(data);
             while (local_date.size() >= batch_size) {
-                auto base = local_date.begin();
+                int epoch_count = std::ceil(local_date.size()/batch_size);
+                int epoch_last = local_date.size()%batch_size;
+                int offset = (epoch_last == 0)? batch_size: epoch_last;
+                auto start = local_date.begin();
+                using Iterator_Category = decltype(start);
                 std::vector<DataType> next_data;
-                int offset = batch_size;
-                while(offset < batch_size){
-                    using Iterator_Category = decltype(base);
-                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<Iterator_Category>, this, base, base + offset);
+                do{
+                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<Iterator_Category>, this, start, start + offset);
+                    start = start + offset;
+                    offset = batch_size;
                     next_data.push_back(std::move(ret.get()));
-                    offset = std::min(batch_size, static_cast<int>(std::distance(base, local_date.end())));
-                    base = base + offset;
-                }
+                }while(--epoch_count);
                 local_date.swap(next_data);
             }
             return std::accumulate(local_date.begin(), local_date.end(), static_cast<DataType>(0));
