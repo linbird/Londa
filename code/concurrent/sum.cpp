@@ -17,8 +17,70 @@
 #include <vector>
 #include <random>
 #include <future>
+#include <mutex>
+#include <fmt/ostream.h>
+#include <condition_variable>
+#include <functional>
+#include <queue>
+#include <thread>
 
 using namespace std::chrono_literals;
+
+class fixed_thread_pool {
+    public:
+        explicit fixed_thread_pool(size_t thread_count)
+        : data_(std::make_shared<data>()) {///创建任务队列
+            for (size_t i = 0; i < thread_count; ++i) {///实例化thread_count个线程
+                std::thread([data = data_] {///每个线程都持有任务队列的共享式智能指针
+                    std::unique_lock<std::mutex> lk(data->mtx_);///对任务队列的数据进行保护
+                    for (;;) {
+                        if (!data->tasks_.empty()) {///还有未被执行的任务
+                            auto current = std::move(data->tasks_.front());///从任务队列中获取一个等待执行的任务
+                            data->tasks_.pop();///移除一个被选择执行的任务
+                            lk.unlock();///解锁任务队列
+                            current();///执行任务
+                            lk.lock();///避免本线程再次获取到任务，但是出了本线程后该锁会自动解锁
+                        } else if (data->is_shutdown_) {///如果所有任务执行完了且要求结束线程（is_shutdown_ = true）;
+                            break;
+                        } else {
+                            data->cond_.wait(lk);///等待任务队列中有新的线程或其他来自条件变量的通知
+                        }
+                    }
+                }).detach();
+            }
+        }
+
+        fixed_thread_pool() = default;
+        fixed_thread_pool(fixed_thread_pool&&) = default;
+
+        ~fixed_thread_pool() {
+            if ((bool) data_) {///如果还有线程持有共享智能指针（即还有线程没有结束）
+                {
+                    std::lock_guard<std::mutex> lk(data_->mtx_);///互斥访问data_数据
+                    data_->is_shutdown_ = true;///结束任务的设置标志
+                }
+                data_->cond_.notify_all();///通知所有线程结束自己的任务
+            }
+        }
+
+        template <class F> void execute(F&& task) {
+            {
+                std::lock_guard<std::mutex> lk(data_->mtx_);///RAII锁，保护data
+                data_->tasks_.emplace(std::forward<F>(task));///项任务队列中加入待执行的任务
+            }
+            data_->cond_.notify_one();///通知等待队列中的第一个线程
+        }
+
+    private:
+        struct data {
+            std::mutex mtx_;///互斥保护任务队列中的数据
+            std::condition_variable cond_;
+            bool is_shutdown_ = false;
+            std::queue<std::function<void()>> tasks_;///保存待执行任务的任务队列
+        };
+        std::shared_ptr<data> data_;
+};
+
 
 template<class Clocker, class Unit> class my_timer{
 private:
@@ -36,7 +98,6 @@ public:
         typename Clocker::duration draft = end - start;
         std::cout << fmt::format("算法耗时{}", std::chrono::duration_cast<Unit>(draft).count()) << std::endl;
     }
-
 };
 
 template <class Generator, class Distribution, typename DataType = int, int length= 100000> class TMP{
@@ -66,16 +127,15 @@ template <class Generator, class Distribution, typename DataType = int, int leng
             std::function<DataType(int, int, int)> action = std::bind(&TMP<Generator, Distribution, DataType, length>::manual_mt<DataType>, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
             auto hook = [&action, thread_count, batch_size, size_threshold](){return action(thread_count, batch_size, size_threshold);};
 //            auto res = benchmark_mt<DataType, decltype(hook)>(std::move(hook));
-            benchmark_entry(std::move(hook));
-            benchmark_entry(std::move([this](){return std::accumulate(data.begin(), data.end(), static_cast<DataType>(0));}));
-            ///执行四种不同策略的并行加法库函数
-//            std::vector<std::any> policies{std::execution::seq, std::execution::unseq, std::execution::par, std::execution::par_unseq};
-//            for(auto& policy : policies)
-//                benchmark_entry<DataType, decltype(policy)>(std::move(policy));
-            benchmark_entry<DataType, decltype(std::execution::seq)>(std::move(std::execution::seq));
-            benchmark_entry<DataType, decltype(std::execution::par)>(std::move(std::execution::par));
-            benchmark_entry<DataType, decltype(std::execution::unseq)>(std::move(std::execution::unseq));
-            benchmark_entry<DataType, decltype(std::execution::par_unseq)>(std::move(std::execution::par_unseq));
+//            benchmark_entry(std::move([this](){return std::accumulate(data.begin(), data.end(), static_cast<DataType>(0));}));
+//            ///执行四种不同策略的并行加法库函数
+////            std::vector<std::any> policies{std::execution::seq, std::execution::unseq, std::execution::par, std::execution::par_unseq};
+////            for(auto& policy : policies)
+////                benchmark_entry<DataType, decltype(policy)>(std::move(policy));
+//            benchmark_entry<DataType, decltype(std::execution::seq)>(std::move(std::execution::seq));
+//            benchmark_entry<DataType, decltype(std::execution::par)>(std::move(std::execution::par));
+//            benchmark_entry<DataType, decltype(std::execution::unseq)>(std::move(std::execution::unseq));
+//            benchmark_entry<DataType, decltype(std::execution::par_unseq)>(std::move(std::execution::par_unseq));
             benchmark_entry(std::move(hook));
         }
 
@@ -88,34 +148,10 @@ template <class Generator, class Distribution, typename DataType = int, int leng
             }
             std::cout << fmt::format("运行参数：数据规模={}，最大线程数量={}，每线程处理数据量={}", data.size(), thread_count, batch_size) << std::endl;
 
-            //            std::packaged_task<DataType(int, int)> task(&TMP::partial_sum);
-            //            std::cout << std::boolalpha << task.valid() << std::endl; // false
-            ////            vector<std::thread> thread_pool;
-            //            while(data.size() > size_threshold){
-            //                vector<DataType> tmp;
-            //                for(int start = 0; start ; start += size_threshold){
-            //                    std::future<DataType> res = task.get_future();
-            //                    task(start, start+size_threshold);
-            //                    tmp.push_back(std::move(res.get()));
-            //                }
-            //                tmp.swap(data);
-            //            }
-            //            return static_cast<ReturnType>(data.front());
             std::vector<DataType> local_date(data);
-//            while (local_date.size() >= batch_size) {
-//                auto base = local_date.begin();
-//                std::vector<DataType> next_data;
-//                int offset = batch_size;
-//                while(offset < batch_size){
-//                    std::future<DataType> ret = std::async(&TMP<Generator, Distribution, DataType, length>::partial_sum<decltype(base)>, this, base, base + offset);
-//                    offset = std::min(batch_size, static_cast<int>(std::distance(base, local_date.end())));
-//                    base = base + offset;
-//                    next_data.push_back(std::move(ret.get()));
-//                    std::cout << fmt::format("数据块之和={}\n", next_data.back());
-//                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-//                }
-//                local_date.swap(next_data);
-//            }
+
+            fixed_thread_pool threadpool(thread_count);
+
             while (local_date.size() >= batch_size) {
                 int epoch_count = std::ceil(local_date.size()/static_cast<float>(batch_size));
                 int epoch_last = local_date.size()%batch_size;
@@ -136,6 +172,7 @@ template <class Generator, class Distribution, typename DataType = int, int leng
 */
 
 /*
+///计算是多线程，回写是单线程有阻塞
                 std::vector<DataType> next_data;
                 do{
                     std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2));
@@ -143,13 +180,30 @@ template <class Generator, class Distribution, typename DataType = int, int leng
                     std::thread(std::move(task), start, start + offset).detach();///缺陷：由于需要在每个线程里都要使用task构建thread，因此task可能需要被反复构建
                     start = start + offset;
                     offset = batch_size;
-                    next_data.push_back(std::move(ret.get()));
+                    next_data.push_back(std::move(ret.get()));//当线程没有写回结果的时候会阻塞当前调用
                 }while(--epoch_count);
                 local_date.swap(next_data);
 */
 
-
+///无法正常完成功能
+                std::vector<DataType> next_data;
+                do{
+                    std::packaged_task<DataType(Iterator_Category, Iterator_Category)> task(std::bind(&TMP::partial_sum<Iterator_Category>, this, std::placeholders::_1, std::placeholders::_2));
+                    threadpool.execute([&task, start, offset, &next_data](){
+                        std::cout << fmt::format("线程{}开始工作", std::this_thread::get_id()) << std::endl;
+//std::future<DataType> ret = task.get_future();
+//                        task(start, start+offset);
+//next_data.push_back(std::move(ret.get()));
+                        std::this_thread::sleep_for(100ms);
+                        std::cout << fmt::format("线程{}结束工作", std::this_thread::get_id()) << std::endl;
+                    });
+                    start = start + offset;
+                    offset = batch_size;
+                }while(--epoch_count);
+                local_date.swap(next_data);
             }
+
+std::this_thread::sleep_for(100ms);
             return std::accumulate(local_date.begin(), local_date.end(), static_cast<DataType>(0));
         }
 
@@ -179,7 +233,9 @@ template <class Generator, class Distribution, typename DataType = int, int leng
         }
 
         template<typename ForwardIterator> DataType partial_sum(ForwardIterator begin, ForwardIterator end){
-            return std::accumulate(begin, end, static_cast<DataType>(0));
+            std::cout << fmt::format("线程{}开始计算部分和",std::this_thread::get_id());
+            return static_cast<DataType>(0);
+//            return std::accumulate(begin, end, static_cast<DataType>(0));
         }
 };
 
@@ -187,6 +243,6 @@ template <class Generator, class Distribution, typename DataType = int, int leng
 int main(){
     //std::cout << TMP<decltype(std::mt19937), decltype(std::uniform_real_distribution), double, 1000000>()(12) << std::endl;
     //std::cout << TMP<std::mt19937, std::uniform_real_distribution<double>, double, 10'000'000>()(12) << std::endl;
-    TMP<std::mt19937, std::uniform_real_distribution<double>, double, 100'000'000>()(12);
+    TMP<std::mt19937, std::uniform_real_distribution<double>, double, 1'000'000>()(12);
     return 0;
 }
