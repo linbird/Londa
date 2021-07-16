@@ -1,4 +1,5 @@
 #include <iostream>
+#include <type_traits>
 #include <utility>
 
 void test_forward(int& x){
@@ -17,7 +18,10 @@ void test_forward(int&& x){
 }
 
 template <typename ParamType> void test(ParamType&& parameter){
+    test_forward(std::forward<ParamType&&>(parameter));//错误写法
+    test_forward(std::forward<ParamType&>(parameter));//错误写法
     test_forward(std::forward<ParamType>(parameter));
+    std::cout << std::endl;
 }
 
 int main(){
@@ -25,6 +29,7 @@ int main(){
     int &b = a;
     int &&c = 1;
 
+/*
 /// a,b,c三个变量的值类别都是左值(locale
 //value)，所以接下来三个函数调用都将匹配到左值版本
     test(a);
@@ -43,5 +48,11 @@ int main(){
     test_forward(std::move(b));
     test(std::move(c));
     test_forward(std::move(c));
+*/
+    test(1);
+    test(a);
+    test(b);
+    test(c);
+    test(std::move(a));
     return 0;
 }
