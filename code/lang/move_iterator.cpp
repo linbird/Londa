@@ -1,3 +1,4 @@
+/// 移动迭代器在便利的过程中move了数据，但是还是在容器里留下了空壳子
 #include <iostream>
 #include <iomanip>
 #include <algorithm>
@@ -29,6 +30,8 @@ int main()
        std::string concat = std::accumulate(moviter_t(v.begin()),
        moviter_t(v.end()),
        std::string()); */
+    std::cout << v.size() << std::endl;
+    v.shrink_to_fit();
     std::cout << v.size() << std::endl;
 
     print_v("New contents of the vector: ");
