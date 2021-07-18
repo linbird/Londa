@@ -303,7 +303,7 @@ Linux中每个进程的`task_struct`结构中有一个**`cpus_allowed` 位掩码
 
 ## 管理锁
 
-+ 为了避免需要手动管理互斥体，减少由于操作不当造成的问题。标准库基于RAII的编程技巧提供了自动化管理互斥体的类。
+为了避免需要手动管理互斥体，减少由于操作不当造成的问题。标准库基于RAII的编程技巧提供了自动化管理互斥体的类。
 
 |    管理类     |  标准  |                   特点                   |
 | :-----------: | :----: | :--------------------------------------: |
@@ -331,18 +331,66 @@ lock(*accountA->getLock(), *accountB->getLock());
 scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 ```
 
-### lock_guard
+### `lock_guard`
 
-+ 不可复制，不可移动转移所有权
+`lock_guard`仅用于上锁、解锁。**不可复制（拷贝构造和赋值函数被声明为`delete`），不可移动转移所有权**。即使程序在锁定期间发生了异常，`lock_guard`也会安全的释放锁，不会发生死锁（**异常安全**）。
 
-### unique_lock
+### `unique_lock`
 
-+ 一种比lock_guard<>更加灵活的RAII类型的锁，不过对应的使用代价也要大一些。
-+ 允许延迟锁定(创建时不锁定)。
-+ 允许带超时的可重入锁定。
-+ 允许递归可重入锁定。
-+ 支持与条件变量一起使用。
-+ 不可复制，但可以通过move转移所有权。
+一种比`lock_guard<>`提供了**更加灵活的所有权控制**的`RAII`类型的锁，**不可复制但可以`move`**转移所有权。支持延迟锁定(创建时不锁定)、支持带超时的可重入锁定、支持递归可重入锁定。支持与条件变量一起使用（**在条件变量中只能使用std::unique_lock<std::mutex>**）。
+
+```c++
+  template <class Mutex> class unique_lock{
+  public:
+      typedef Mutex mutex_type;
+      // 空unique_lock对象
+      unique_lock() noexcept;
+      // 管理m, 并调用m.lock进行上锁，如果m已被其它线程锁定，由该构造了函数会阻塞。
+      explicit unique_lock(mutex_type& m);
+      // 仅管理m，构造函数中不对m上锁。可以在初始化后调用lock, try_lock, try_lock_xxx系列进行上锁。
+      unique_lock(mutex_type& m, defer_lock_t) noexcept;
+      // 管理m, 并调用m.try_lock，上锁不成功不会阻塞当前线程
+      unique_lock(mutex_type& m, try_to_lock_t);
+      // 管理m, 该函数假设m已经被当前线程锁定，不再尝试上锁。
+      unique_lock(mutex_type& m, adopt_lock_t);
+      // 管理m, 并调用m.try_lock_unitil函数进行加锁
+      template <class Clock, class Duration> unique_lock(mutex_type& m, const chrono::time_point<Clock, Duration>& abs_time);
+      // 管理m，并调用m.try_lock_for函数进行加锁
+      template <class Rep, class Period> unique_lock(mutex_type& m, const chrono::duration<Rep, Period>& rel_time);
+      // 析构，如果此前成功加锁(或通过adopt_lock_t进行构造)，并且对mutex拥有所有权，则解锁mutex
+      ~unique_lock();
+  
+      // 禁止拷贝操作
+      unique_lock(unique_lock const&) = delete;
+      unique_lock& operator=(unique_lock const&) = delete;
+  
+      // 支持move语义
+      unique_lock(unique_lock&& u) noexcept;
+      unique_lock& operator=(unique_lock&& u) noexcept;
+  
+      void lock();
+      bool try_lock();
+  
+      template <class Rep, class Period> bool try_lock_for(const chrono::duration<Rep, Period>& rel_time);
+      template <class Clock, class Duration> bool try_lock_until(const chrono::time_point<Clock, Duration>& abs_time);
+  
+      // 显示式解锁，该函数调用后，除非再次调用lock系列函数进行上锁，否则析构中不再进行解锁
+      void unlock();
+  
+      // 与另一个unique_lock交换所有权
+      void swap(unique_lock& u) noexcept;
+      // 返回当前管理的mutex对象的指针，并释放所有权
+      mutex_type* release() noexcept;
+  
+      // 当前实例是否获得了锁
+      bool owns_lock() const noexcept;
+      // 同owns_lock
+      explicit operator bool () const noexcept;
+      // 返回mutex指针，便于开发人员进行更灵活的操作
+      // 注意：此时mutex的所有权仍归unique_lock所有，因此不要对mutex进行加锁、解锁操作
+      mutex_type* mutex() const noexcept;
+  }
+```
 
 # 数据同步
 
@@ -357,7 +405,7 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 #### 条件变量类型
 
-+ 当一个线程所需要的条件不满足时，线程会等待到条件满足时再执行。条件变量提供了一个可以让多个线程间同步协作的功能。
+当一个线程所需要的条件不满足时，线程会一直阻塞等待直到条件满足时再被唤醒。条件变量**利用线程间共享的全局变量**提供了让多个线程间同步协作的功能。
 
 |          条件变量           |                     说明                     |
 | :-------------------------: | :------------------------------------------: |
@@ -368,12 +416,50 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 #### 条件变量协作机制
 
-+ 条件变量的`wait()`和`notify*()`共同构成了线程间互相协作的基础。
+条件变量机制主要包括两个动作：一个线程因等待条件变量的条件成立而挂起`wait*()`，另外一个线程使条件成立给出信号`notify*()`，从而唤醒被等待的线程。
 
-1. `wait()`：在等待的条件**未就绪时会==解锁==互斥量，并让当前线程继续等待**，只有就绪时线程才会继续执行。
+##### `wait*`
 
-2. `notify_all()/ notify_one()`：将条件变量中由于调用`wait()`而等待的的所有或一个线程唤醒，被唤醒的线程会尝试获取互斥锁并再次判断条件是否满足。
+`wait()、wait_for().wait_until()`：在等待的条件**未就绪时会==自动解锁==互斥量，并让当前线程继续等待**，只有就绪时线程才会继续执行。
 
+```c++
+void wait( std::unique_lock<std::mutex>& lock );
+template<class Predicate> void wait( std::unique_lock<std::mutex>& lock, Predicate pred );
+///while (!pred()) { wait(lock);}///等价于模板函数
+
+template< class Rep, class Period> std::cv_status wait_for( std::unique_lock<std::mutex>& lock, const std::chrono::duration<Rep, Period>& rel_time);
+template< class Rep, class Period, class Predicate> bool wait_for( std::unique_lock<std::mutex>& lock, const std::chrono::duration<Rep, Period>& rel_time, Predicate pred);
+```
+
+###### 虚假唤醒
+
+在正常情况下，wait类型函数返回时要不是因为被唤醒，要不是因为超时才返回，但在实际中因操作系统的原因`wait`在不满足条件时也会返回。因此一般都是使用带有谓词参数的`wait`函数来避免虚假唤醒。
+
+```c++
+template<class Predicate> void wait( std::unique_lock<std::mutex>& lock, Predicate pred );
+
+///等价于以下写法：避免虚假唤醒
+while (!(xxx条件) ){//否则继续等待，解决虚假唤醒
+    wait();//虚假唤醒发生，由于while循环，再次检查条件是否满足，
+}
+```
+
+##### `notify*`
+
+`notify_all()/ notify_one()`：将条件变量中由于调用`wait()`而等待的的所有或一个线程唤醒，被唤醒的线程会尝试获取互斥锁并再次判断条件是否满足。
+
+```c++
+void notify_one() noexcept;///若任何线程在 *this 上等待，则调用 notify_one 会解阻塞(唤醒)等待线程之一。
+
+void notify_all() noexcept;///若任何线程在 *this 上等待，则解阻塞（唤醒)全部等待线程。
+```
+
+|      API       |               对象               |                      锁                      |
+| :------------: | :------------------------------: | :------------------------------------------: |
+| `notify_one()` | 只唤醒**等待队列中的第一个线程** |                 不存在锁争用                 |
+| `notify_all()` | 唤醒等待队列中**阻塞的所有线程** | 只有一个线程获取锁、未获取锁的将一直尝试获取 |
+
+#### 条件变量使用
    ```cpp
    condition_variable mConditionVar; // ①
    void changeMoney(double amount) {
@@ -387,16 +473,11 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
    // wait和notify_all虽然是写在一个函数中的，但是在运行时它们是在多线程环境中执行的，因此对于这段代码，需要能够从不同线程的角度去思考代码的逻辑。
    ```
 
-|      API       |               对象               |                      锁                      |
-| :------------: | :------------------------------: | :------------------------------------------: |
-| `notify_one()` | 只唤醒**等待队列中的第一个线程** |                 不存在锁争用                 |
-| `notify_all()` | 唤醒等待队列中**阻塞的所有线程** | 只有一个线程获取锁、未获取锁的将一直尝试获取 |
-
 ```c++
 std::mutex mtx;
 std::condition_variable cv;
 bool ready = false;
- 
+
 void print_id(int id) {
 	std::unique_lock<std::mutex> lck(mtx);
 	while (!ready) cv.wait(lck);
@@ -440,16 +521,24 @@ return 0;
 
 ### `std::async`
 
-+ 通过`std:async()`可以启动一个后台任务，`async()`的全体参数由**控制参数和运行参数**两部分组成，控制参数控制具体的启动策略（是否启用新线程以及运行时机）；运行参数传递给实际任务执行者，参数形式和参数传递方式与`thread`对象的构造函数相同。
+通过`std:async()`可以启动一个后台任务，`async()`的全体参数由**控制参数和运行参数**两部分组成，控制参数控制具体的启动策略（是否启用新线程以及运行时机）；运行参数传递给实际任务执行者，参数形式和参数传递方式与`thread`对象的构造函数相同。
 
-+ 控制参数：`std::launch`类型，支持异或运算，默认为`std::launch::async|std::launch::deferred`。
+```c++
+//FR用来推断函数F的返回值类型
+#define FR typename result_of<typename decay<F>::type(typename decay<Args>::type...)>::type
 
-  |          参数           |                             意义                             |
-  | :---------------------: | :----------------------------------------------------------: |
-  |  `std::launch::async`   |          **异步求值**：函数必须异步执行在其他线程上          |
-  | `std::launch::deferred` | **惰性求值**：`future`被需要时（`future`调用`get()、wait()`时）再执行函数 |
+template <class F, class... Args> future<FR> async(F&& f, Args&&... args);
+template <class F, class... Args> future<FR> async(launch policy, F&& f, Args&&... args);
+```
 
-+ 返回值：该函数返回`future<>`模板类的一个实例化对象，其值来自于异步函数中的`return`语句，由`async<>()`自动设置。
+控制参数：`std::launch`类型，支持异或运算，默认为`any = std::launch::async|std::launch::deferred`，clang中的`any`策略优先使用async策略，如果创建线程失败，则使用deferred策略。
+
+|          参数           |                             意义                             |
+| :---------------------: | :----------------------------------------------------------: |
+|  `std::launch::async`   |          **异步求值**：函数必须异步执行在其他线程上          |
+| `std::launch::deferred` | **惰性求值**：`future`被需要时（`future`调用`get()、wait()`时）再执行函数 |
+
+返回值：该函数返回`future<>`模板类的一个实例化对象，其值来自于异步函数中的`return`语句，由`async<>()`自动设置。
 
 ```c++
 int func(){
@@ -468,7 +557,7 @@ cout << "开始执行异步任务：" << f.get() << endl;
 
 该对象内部**包含存储的任务和共享状态**两种元素，通过调用该对象就会自动调用`packaged_tak<>::operator()`执行相关的任务（设计模式：[命令模式](https://en.wikipedia.org/wiki/Command_pattern)）。当存储的任务在某个时刻将共享状态设置为就绪后，将异步的自动将共享状态设置到通过`std::packaged_task<>::get_future()`绑定的对象`std::future<>`中，通过`future::get()`可以获取异步执行的返回信息。
 
-该模板类**禁用拷贝赋值、拷贝构造；支持移动赋值、移动构造**（有参构造函数均需要右值引用参数）。通过`reset`清除共享状态、重新绑定`future<>`，可以多次执行`package_tak<>::operator()`。
+该模板类**禁用拷贝赋值、拷贝构造；支持移动赋值、移动构造**（有参构造函数均需要右值引用参数）。通过`packaged_task<>::reset()`清除共享状态、重新绑定`future<>`，可以多次执行`package_tak<>::operator()`。
 
 ```c++
 std::packaged_task<int(int,int)> task([](int a, int b) {return a+b; });
@@ -485,35 +574,44 @@ std::cout << "task_thread:\t" << ret.get() << '\n';///获取异步结果：22
 
 ### `future、promise、shared_future`
 
-#### `future与promise`
+#### `future<>与promise<>`
 
-+ `promise`可以和**一个**`future`关联绑定，两者配合可以实现一个通信机制（`future`阻塞线程等待数据，`promise`提供数据并将`future`置为就绪态）：将`promise`对象传入到线程内部并在内部设置值，线程外部通过的`std::promise::get_future()`成获取与之相关的`std::future`对象的值。
+`promise`可以和**一个**`future`关联绑定（不能对同一个`promise<>`多次调用`get_future()`），两者配合可以实现一个通信机制（`future`阻塞线程等待数据，`promise`提供数据并将`future`置为就绪态）：将`promise`对象传入到线程内部并在内部通过`promise<>::set_value()`设置值并置状态为`ready`（**该函数只能被调用一次，多次调用会抛出`std::future_error异常`**），线程外部通过的`std::promise::get_future()`成获取与之相关的`std::future`对象的值。
 
-  ```cpp
-  void f(std::promise<void> ps){
-      ps.set_value();
-  }
-   
-  int main()
-  {
-      std::promise<void> ps;
-      auto ft = ps.get_future();
-  //    auto ft2 = ps.get_future(); // 抛出std::future_error异常
-      std::thread t(f, std::move(ps));
-      ft.wait(); // 阻塞直到set_value，相当于没有返回值的get
-      t.join();
-      return 0;
-  }
-  ```
+如果直到销毁时都未设置过任何值，`promise`会在析构时自动设置为`std::future_error`，这会造成`std::future<>::get`抛出`std::future_error`异常。在一个`promise<>`对象上多次调用`get_future()`会造成`future_already_retrieved `异常。
 
-+ 都支持传递线程内部的异常，`future`以自动抛出异常，`promise`需要借助`promise::set_exception()`函数。
+```cpp
+//promise<void>和future<void>不设置传递值，只是用于线程内外状态的一个通知。
+void f(std::promise<void> ps){
+    ps.set_value();
+}
+ 
+int main(){
+    std::promise<void> ps;
+    auto ft = ps.get_future();
+//    auto ft2 = ps.get_future(); // 抛出std::future_error异常
+    std::thread t(f, std::move(ps));
+    ft.wait(); // 阻塞直到set_value，相当于没有返回值的get
+//    ft.wait(); //再次获取会发生错误
+    t.join();
+    return 0;
+}
+```
+
+两者都支持传递线程内部的异常，`future`以自动抛出异常，`promise`需要借助`promise::set_exception()`函数。
+
+| `future_status`状态 |                             解释                             |
+| :-----------------: | :----------------------------------------------------------: |
+|       `ready`       |                         共享状态就绪                         |
+|      `timeout`      | 共享状态在经过指定的时限时长前（`wait_for、wait_until`）仍未就绪 |
+|     `deferred`      |      共享状态含有延迟的函数，故将仅在显式请求时计算结果      |
 
 #### `future`与`shared_future`
 
-|            |         `future`         |                 `shared_future`                 |
-| :--------: | :----------------------: | :---------------------------------------------: |
-|  事件关联  |   只能与指定的事件关联   |                可以关联多个事件                 |
-| 结果所有权 | 独享可移动、只能获取一次 | 可拷贝，多个shared_future对象可以引用同一结果。 |
+|            |         `future`         |                  `shared_future`                  |
+| :--------: | :----------------------: | :-----------------------------------------------: |
+|  事件关联  |   只能与指定的事件关联   |                 可以关联多个事件                  |
+| 结果所有权 | 独享可移动、只能获取一次 | 可拷贝，多个`shared_future`对象可以引用同一结果。 |
 
 ## `std::experimental`
 
@@ -605,12 +703,13 @@ struct S {
 
 ## 原子类型
 + 多线程读写同一变量需要使用同步机制，最常见的同步机制就是`std::mutex`和`std::atomic`，其中`atomic`通常提供更好的性能。
+
 + 定义在`atomic`头文件中的模板类，主要用于替代`mutex`实现同步
 
-* **注意事项**
+**注意事项**
 
-1. 所有原子类型都**不支持拷贝和赋值**，因为该操作涉及了两个原子对象（对于两个不同的原子对象上单一操作不可能是原子的）。但可以用对应的内置类型或者提供的成员函数赋值。
-2. `std::atomic_flag`是一个原子布尔类型，也是唯一一个保证无锁的原子类型，只支持`ATOM_FLAG_INIT`宏初始化为`clear()`状态，且只支持在`set()`和`clear()`之间转换。
+1. 所有原子类型都**不支持拷贝、赋值和移动**，因为该操作涉及了两个原子对象（对于两个不同的原子对象上单一操作不可能是原子的）。但可以用对应的内置类型或者提供的成员函数赋值。
+2. **`std::atomic_flag`是唯一一个保证无锁的原子类型**，只支持`ATOM_FLAG_INIT`宏初始化为`clear()`状态，且只支持在`set()`和`clear()`之间转换。
 3. 规范要求`atomic_flag`的原子操作都是免锁的，其他类型是否免锁与具体的平台有关。
 4. 原子操作并**不一定能提高性能**，只有在没有任何竞争或只被一个线程访问的原子操作是才比较快的，当原子操作需要等待CPU的MESI等硬件算法完成一致性同步时，这个复杂的硬件算法使得原子操作会变得很慢。
 
@@ -637,7 +736,7 @@ namespace std {
 
 ### 自定义原子类型
 
-+ 该自定义类型必须[可平凡复制](https://zh.cppreference.com/w/cpp/named_req/TriviallyCopyable) (使用`std::is_trivially_copyable`校验, 通俗的说，就是可以直接按字节拷贝的结构称)。
++ 该自定义类型必须[可平凡复制](https://zh.cppreference.com/w/cpp/named_req/TriviallyCopyable) (使用`std::is_trivially_copyable`校验, 通俗的说，就是可以直接按字节拷贝的结构)。
 + 自定义类型的原子类型不允许运算操作，只允许`is_lock_free、load、store、exchange、compare_exchange_weak`和`compare_exchange_strong`，以及赋值操作和向自定义类型转换的操作o
 
 ## 原子操作支持
@@ -1045,4 +1144,8 @@ int main(){
 
 # 其它推荐
 
-[模拟实现`std::future`](http://blog.xnnyygn.in/cpp11-std-thread-input-and-output1/)
+[模拟实现`std::future`](http://blog.xnnyygn.in/cpp11-std-thread-input-and-output1/) 
+
+[C++11 并发指南系列](https://www.cnblogs.com/haippy/p/3284540.html)
+
+[C++11多线程-目录](https://www.jianshu.com/p/e5a3498ba930)
