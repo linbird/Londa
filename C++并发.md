@@ -433,20 +433,20 @@ template< class Rep, class Period, class Predicate> bool wait_for( std::unique_l
 
 ###### 虚假唤醒
 
-在正常情况下，wait类型函数返回时要不是因为被唤醒，要不是因为超时才返回，但在实际中因操作系统的原因`wait`在不满足条件时也会返回。因此一般都是使用带有谓词参数的`wait`函数来避免虚假唤醒。
+在正常情况下，wait类型函数返回时要不是因为被唤醒，要不是因为超时才返回，但在实际中因操作系统的原因**`wait`在不满足条件时也有可能返回**。因此一般都是使用带有谓词参数的`wait`函数来避免虚假唤醒，谓词为`true`时`wait()`函数不会阻塞会直接返回。
 
 ```c++
 template<class Predicate> void wait( std::unique_lock<std::mutex>& lock, Predicate pred );
 
 ///等价于以下写法：避免虚假唤醒
-while (!(xxx条件) ){//否则继续等待，解决虚假唤醒
-    wait();//虚假唤醒发生，由于while循环，再次检查条件是否满足，
+while (!(xxx) ){//否则继续等待，解决虚假唤醒======（NOTE 等价于 !xxx）======
+    wait();//虚假唤醒发生，由于while循环，再次检查条件是否满足
 }
 ```
 
 ##### `notify*`
 
-`notify_all()/ notify_one()`：将条件变量中由于调用`wait()`而等待的的所有或一个线程唤醒，被唤醒的线程会尝试获取互斥锁并再次判断条件是否满足。
+`notify_all()/ notify_one()`：将条件变量中由于调用`wait()`而等待的的所有或一个线程唤醒，被唤醒的线程会尝试获取互斥锁并再次判断条件是否满足。**`notify*`不需要处于互斥锁的保护范围内**，所以在唤醒条件变量之前可以将锁`unlock()`。
 
 ```c++
 void notify_one() noexcept;///若任何线程在 *this 上等待，则调用 notify_one 会解阻塞(唤醒)等待线程之一。
