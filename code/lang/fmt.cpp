@@ -6,6 +6,8 @@
 #include <fmt/color.h>
 #include <fmt/printf.h>
 #include <ctime>
+#include <string>
+
 
 using namespace std;
 using namespace fmt;
@@ -13,7 +15,8 @@ using namespace fmt;
 int main()
 {
     // Format into a std::string
-    auto msg1 = fmt::format("The answer is {}", 42);
+    string x = "{";
+    auto msg1 = fmt::format("The answer is {} {}", 42, x);
     auto msg2 = "{0}{1}"_format("The answer is ", 42);
 
     // Print std::string
@@ -47,7 +50,8 @@ int main()
 
     // Text color and style manipulation
     fmt::print(fmt::emphasis::bold, "The text is bold\n");
-    fmt::print(fmt::fg(fmt::color::red) | fmt::bg(fmt::color::green), "The color is red and green\n");
+    string z("int main(int argc, char *argv[]){");
+    fmt::print(fmt::fg(fmt::color::red) | fmt::bg(fmt::color::green), "The color is red and green{}{}{}\n", x, 12, z);
 
     // Date and time formatting
 //    std::time_t t = std::time(nullptr);
