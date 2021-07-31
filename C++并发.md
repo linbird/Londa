@@ -333,11 +333,11 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 ### `lock_guard`
 
-`lock_guard`仅用于上锁、解锁。**不可复制（拷贝构造和赋值函数被声明为`delete`），不可移动转移所有权**。即使程序在锁定期间发生了异常，`lock_guard`也会安全的释放锁，不会发生死锁（**异常安全**）。
+`lock_guard<>`模板类仅提供了构造和析沟函数用于上锁和解锁，**不可复制（拷贝构造和赋值函数被声明为`delete`），不可移动转移所有权**。即使程序在锁定期间发生了异常，`lock_guard`也会安全的释放锁，不会发生死锁（**异常安全**）。
 
 ### `unique_lock`
 
-一种比`lock_guard<>`提供了**更加灵活的所有权控制**的`RAII`类型的锁，**不可复制但可以`move`**转移所有权。支持延迟锁定(创建时不锁定)、支持带超时的可重入锁定、支持递归可重入锁定。支持与条件变量一起使用（**在条件变量中只能使用std::unique_lock<std::mutex>**）。
+一种比`lock_guard<>`提供了**更加灵活的所有权控制**的`RAII`类型的锁，**不可复制但可以`move`**转移所有权。支持延迟锁定(创建时不锁定：第二参数指定为`std::defer_lock`)、支持带超时的可重入锁定、支持递归可重入锁定。支持与条件变量一起使用（**在条件变量中只能使用std::unique_lock<std::mutex>**）。
 
 ```c++
   template <class Mutex> class unique_lock{
@@ -416,7 +416,7 @@ scoped_lock lockAll(*accountA->getLock(), *accountB->getLock());
 
 #### 条件变量协作机制
 
-条件变量机制主要包括两个动作：一个线程因等待条件变量的条件成立而挂起`wait*()`，另外一个线程使条件成立给出信号`notify*()`，从而唤醒被等待的线程。
+条件变量机制主要包括两个动作：一个线程因等待条件变量的条件成立而挂起`wait*()`，另外一个线程使条件成立给出信号`notify*()`，从而唤醒被等待的线程。为了防止竞争，条件变量的使用总是和一个锁结合在一起（该锁必**须提供`lock`和`unlock`接口**），并且**管理这个锁只能是 `std::unique_lock<std::mutex> `RAII模板类**。
 
 ##### `wait*`
 
@@ -433,7 +433,7 @@ template< class Rep, class Period, class Predicate> bool wait_for( std::unique_l
 
 ###### 虚假唤醒
 
-在正常情况下，wait类型函数返回时要不是因为被唤醒，要不是因为超时才返回，但在实际中因操作系统的原因**`wait`在不满足条件时也有可能返回**。因此一般都是使用带有谓词参数的`wait`函数来避免虚假唤醒，谓词为`true`时`wait()`函数不会阻塞会直接返回。
+在正常情况下，`wait`类型函数返回时要不是因为被唤醒，要不是因为超时才返回，但在实际中因操作系统的原因**`wait*`在不满足条件时也有可能返回**。因此一般都是使用带有谓词参数的`wait*`函数来避免虚假唤醒，谓词为`false`时会执行`wait*`阻塞线程，为`true`时会直接向下运行。
 
 ```c++
 template<class Predicate> void wait( std::unique_lock<std::mutex>& lock, Predicate pred );
