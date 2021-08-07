@@ -19,6 +19,12 @@
 #include <fmt/format.h>
 #include <fmt/ostream.h>
 
+#include <boost/thread/externally_locked_stream.hpp>
+typedef  boost::externally_locked_stream<std::ostream> the_ostream;
+boost::recursive_mutex terminal_mutex;
+the_ostream mcerr(std::cerr, terminal_mutex);
+the_ostream mcout(std::cout, terminal_mutex);
+
 using namespace std;
 
 void worker(sockaddr* addr){
@@ -41,12 +47,12 @@ void worker(sockaddr* addr){
                 }
                 if(storage.ss_family == AF_INET){
                     sockaddr_in* addr = (sockaddr_in*)&storage;
-                    cout << fmt::format("服务器{}开启监听，监听地址为{}:{}\n", this_thread::get_id(), inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
+                    mcout << fmt::format("服务器{}开启监听，监听地址为{}:{}\n", this_thread::get_id(), inet_ntoa(addr->sin_addr), ntohs(addr->sin_port));
                 }else{
                     sockaddr_in6* addr = (sockaddr_in6*)&storage;
                     char ip[INET6_ADDRSTRLEN];
                     inet_ntop(AF_INET6, &addr->sin6_addr, ip, sizeof(addr));
-                    cout << fmt::format("服务器开启监听，监听地址为{}:{}\n", ip, ntohs(addr->sin6_port));
+                    mcout << fmt::format("服务器开启监听，监听地址为{}:{}\n", ip, ntohs(addr->sin6_port));
                 }
                 while(1){
                     sockaddr client_info;
@@ -60,7 +66,7 @@ void worker(sockaddr* addr){
                         copy(buffer, buffer+read_count, back_inserter(read_content));
                         memset(buffer, 0, 1024);
                     }
-                    cout << this_thread::get_id() << " 读取内容" << read_content << endl;
+                    mcout << this_thread::get_id() << " 读取内容" << read_content << endl;
                 }
                 close(server_fd);
             }
