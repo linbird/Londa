@@ -617,6 +617,19 @@ int main(){
 
 ## `std::experimental`
 
+## 多线程的IO
+
+C++中的`cout、cin、cerr、clog`等IO流对象是全局静态变量，无法用锁完成对标准输入、标准输出、标准错误等文件进行保护，所以这些**C++全局IO对象是线程不安全的**，需要借助`boost`才能实现线程安全的输出。C语言的printf()只有在使用多线程C运行时库时才是安全的。
+
+```c++
+#include <boost/thread/externally_locked_stream.hpp>
+
+typedef  boost::externally_locked_stream<std::ostream> the_ostream;
+boost::recursive_mutex terminal_mutex;
+the_ostream mcerr(std::cerr, terminal_mutex);
+the_ostream mcout(std::cout, terminal_mutex);
+```
+
 # 内存模型与原子操作
 
 ## 内存模型
