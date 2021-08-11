@@ -8,19 +8,7 @@ https://blog.laoyu.site/2019/redis/Redi%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84%E2%8
 
 https://www.laoyu.site/2021/%E6%8A%80%E6%9C%AF%E5%AE%9E%E8%B7%B5/redis/Redis%E6%8C%81%E4%B9%85%E5%8C%96%E2%80%94%E2%80%94AOF%E6%97%A5%E5%BF%97/
 
-https://www.cnblogs.com/hunternet/p/12742390.html
-
-https://www.cnblogs.com/hunternet/p/12695738.html
-
-https://www.cnblogs.com/hunternet/p/12624691.html
-
-https://www.cnblogs.com/hunternet/p/9957913.html
-
-https://www.cnblogs.com/hunternet/p/11306690.html
-
 https://segmentfault.com/a/1190000017328042
-
-https://www.cnblogs.com/ourroad/p/4896387.html
 
 https://blog.csdn.net/zgaoq/article/details/89710600
 
