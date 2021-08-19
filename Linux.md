@@ -369,24 +369,27 @@
 
 一个操作系统可以支持多种底层不同的文件系统（比如NTFS, FAT,  ext3,  ext4），为了给内核和用户进程提供统一的文件系统视图，Linux在用户进程和底层文件系统之间加入了一个抽象层，即虚拟文件系统(Virtual  File System, VFS)。通过虚拟文件系统VFS提供的抽象层来适配各种底层不同的文件系统甚至不同介质，进程所有的文件操作都由VFS完成实际的文件操作。文件IO流程简化为：
 
-1. 应用程序通过文件操作函数（`open()、close()、read()、write()、ioctl()`）调用VFS提供的系统调用函数接口(`sys_open()、sys_close()、sys_read()、sys_write()、sys_ioctl()`)同VFS进行交互。
-2. VFS通过驱动程序提供的`file_operation`接口同设备驱动进行交互（驱动层的`file_operations`方法的屏蔽了不同类型设备的底层操作方法的差异）
+1: 应用程序通过文件操作函数（`open()、close()、read()、write()、ioctl()`）调用VFS提供的系统调用函数接口(`sys_open()、sys_close()、sys_read()、sys_write()、sys_ioctl()`)同VFS进行交互。
+
+2: VFS通过驱动程序提供的`file_operation`接口同设备驱动进行交互（通过file_operations`方法的屏蔽了不同类型设备的底层操作方法的差异）
 
 ![虚拟文件系统层](img/Linux/VFS.JPEG)
 
 ## 数据结构
 
-每个单独的文件系统分别为自己所管理的文件系统提供相应的控制结构，组织自己所管理的所有文件。
+每个单独的文件系统分别为自己所管理的文件系统提供相应的控制结构，组织自己所管理的所有文件。VFS主要通过四个主要的结构体实现抽象层，每个结构体包含了指向该结构体支持的方法列表的指针。[更详细的说明](https://www.huliujia.com/blog/81d31574c9a0088e8ae0c304020b4b1c4f6b8fb9/)
 
 ![单个文件系统的组织](./img/Linux/tradictional-layout.png)
 
-VFS主要通过四个主要的结构体实现抽象层，每个结构体包含了指向该结构体支持的方法列表的指针。[更详细的说明](https://www.huliujia.com/blog/81d31574c9a0088e8ae0c304020b4b1c4f6b8fb9/)
+|   区域   |         超级块         |  索引节点区  |      逻辑块区      |
+| :------: | :--------------------: | :----------: | :----------------: |
+| **内容** | 存储文件系统的详细信息 | 存储索引节点 | 存储文件或目录数据 |
 
 ![几个结构的关系](img/Linux/relation.png)
 
 ![VFS中超级块、挂载点以及文件系统的关系](./img/Linux/vfs.jpg)
 
-### 超级块对象 super block
+### 超级块对象 `super block`
 
 存储一个已安装的**文件系统的控制信息**，每一个超级块对象代表一个已安装文件系统实例；每次一个实际的文件系统被安装时，内核会从磁盘的特定位置读取一些控制信息来填充**常驻内存**中的超级块对象。
 
@@ -466,13 +469,13 @@ struct super_operations {//对文件系统和它的inode执行low-level operatio
 
 为了方便查找文件而在内存创建的**目录项缓存**对象（目录也是文件、即**目录文件**），存储的是**磁盘文件系统目录树结构的一部分**，一个路径上的每一个组件都是一个`dentry`，包含目录下的所有的文件的`inode`号和文件名等信息，如路径`/bin/vi.txt`中共有3个`dentry（ /、 bin、vi.txt）`，但通过文件链接，**同一个文件可以有多个`dentry`**。其内部是树形结构，操作系统检索一个文件，都是从根目录开始，按层次解析路径中的所有目录，直到定位到文件。
 
-#### dentry
+#### `dentry`
 
-| dentry状态  | d_inode |                           使用状态                           |
-| :---------: | :-----: | :----------------------------------------------------------: |
-|  **used**   |  有效   |         `d_count`是正数、有一个或者多个用户正在使用          |
-| **unused**  |  有效   | `d_count`是0、`VFS`并没有使用该`dentry`，但仍在`dentry cache` |
-| **negtive** | `null`  | `inode`对象被销毁了或者是查找的路径名称不对。此时`dentry`仍然被保存在`cache`中 |
+| dentry状态  | `d_inode` |                           使用状态                           |
+| :---------: | :-------: | :----------------------------------------------------------: |
+|  **used**   |   有效    |         `d_count`是正数、有一个或者多个用户正在使用          |
+| **unused**  |   有效    | `d_count`是0、`VFS`并没有使用该`dentry`，但仍在`dentry cache` |
+| **negtive** |  `null`   | `inode`对象被销毁了或者是查找的路径名称不对。此时`dentry`仍然被保存在`cache`中 |
 
 ```c
 struct qstr {//quick string
@@ -489,7 +492,6 @@ struct dentry {//directory entry
  　 atomic_t d_count;//目录项对象使用计数器 
 	struct dentry *d_parent;//父目录
 	struct qstr d_name;//文件名
-	struct hlist_bl_node d_hash;//哈希链表：hash由父dentry的地址和该d_name计算出，用于快速索引到本dentry
     struct list_head d_lru; // 未使用的dentry构成的链表 
 	struct inode *d_inode;//与该目录项关联的inode
 	unsigned char d_iname[DNAME_INLINE_LEN];//文件缩略名
@@ -512,9 +514,9 @@ struct dentry_operations {
 
 ![dentry与inode之间的联系](./img/Linux/dentry-inode.png)
 
-#### [dentry cache](https://blog.csdn.net/whatday/article/details/100663436)
+#### [`dentry cache`](https://blog.csdn.net/whatday/article/details/100663436)
 
-为了提高目录项对象的处理效率而设计的**目录项高速缓存**（`dcache`），只要**有效`dentry`**被`cache`，对应的`inode`就一定也被cache到了内存之中。由空间由**`slab`分配器管理**，主要由`dentry`对象的哈希链表`dentry_hashtable`和未使用的`dentry`对象链表`dentry_unused`**两个数据结构**组成：
+为了提高目录项对象的处理效率而设计的**目录项高速缓存**`dcache`，其空间由**`slab`分配器管理**，主要由`dentry`对象的哈希链表`dentry_hashtable`和未使用的`dentry`对象链表`dentry_unused`**两个数据结构**组成。只要**有效`dentry`**被`cache`，对应的`inode`就一定也被`cache`到了内存之中。
 
 ①：`dentry_hashtable`链表`dentry::dhash`：`dcache`中的所有`dentry`对象都通过`d_hash`指针域链到相应的`dentry`哈希链表中。
 
@@ -574,7 +576,9 @@ struct address_space { //对应一个已缓存文件，管理着若干个页
 
 ### 索引节点对象 inode
 
-存储了**文件元数据**（文件大小，设备标识符，用户标识符，用户组标识符，文件模式，扩展属性，文件读取或修改的时间戳，链接数量，指向存储该内容的磁盘区块的指针，文件分类等），代表了存储设备上的一个实际的**物理文件**且不随文件名改变而变化。文件系统内部依靠`inode`而非文件名来识别文件（借此实现软件的[热更新](https://zhuanlan.zhihu.com/p/143430585)）。
+**每个文件有且只有一个`inode`**，文件系统内部依靠`inode`而非文件名来识别文件（借此实现软件的[热更新](https://zhuanlan.zhihu.com/p/143430585)）。每个`inode`存储了**文件元数据**（文件大小，设备标识符，用户标识符，用户组标识符，文件模式，扩展属性，文件读取或修改的时间戳，链接数量，**指向存储该内容的磁盘区块的指针**，文件分类等），代表了存储设备上的一个实际的**物理文件**且不随文件名改变而变化。
+
+![超级块与inode节点之间的联系](./img/Linux/superblock-inode.png)
 
 ```c
 struct inode {//文件的惟一标识符，文件名可以更改但inode号锁定文件
@@ -610,9 +614,9 @@ struct inode_operations {
 
 #### inode的产生
 
-`inode`节点的大小一般是128字节或256字节，每个节点管理2KB的空间（一般文件系统中很少有文件小于2KB的，所以预定按照2KB分），节点总数在格式化时就给定(现代OS可以动态变化)。`inode`有两种，一种是VFS的`inode`，一种是具体文件系统的`inode`。前者在内存中，后者在磁盘中。
+`inode`节点的大小一般是128字节或256字节，每个`inode`节点管理2KB的空间（一般文件系统中很少有文件小于2KB的，所以预定按照2KB分），节点总数在格式化时就给定（现代OS可以动态变化）。
 
-当一个文件被访问时，内核会在内存中组装相应的索引节点对象，以便向内核提供对一个文件进行操作时所必需的全部信息（这些信息一部分存储在磁盘特定位置，另外一部分是在加载时动态填充的）。没有`inode`的**匿名文件**则需要根据磁盘上的数据动态生成`inode`的信息，并将这些信息填入内存中的`inode`对象。
+`inode`有两种，一种是VFS的`inode`，一种是具体文件系统的`inode`，前者在内存中，后者在磁盘中。当一个文件被访问时，内核会在内存中组装相应的索引节点对象，以便向内核提供对一个文件进行操作时所必需的全部信息（这些信息一部分存储在磁盘特定位置，另外一部分是在加载时动态填充的）。没有`inode`的**匿名文件**则需要根据磁盘上的数据**动态生成`inode`**的信息，并将这些信息填入内存中的`inode`对象。
 
 #### [inode的管理](https://www.cnblogs.com/long123king/archive/2014/01/30/3536486.html)
 
@@ -632,9 +636,15 @@ ls -l # 看文件名对应的inode号码
 | **软链接** | 不同，实际数据文件`inode`引用计数不变 | 被链接的文件的路径 |
 | **硬链接** | 相同，实际数据文件`inode`引用计数增加 |      文件内容      |
 
-![超级块与inode节点之间的联系](./img/Linux/superblock-inode.png)
+##### inode与数据块
+
+磁盘读写的最小单位是**扇区**，扇区的大小只有 `512B` 大小，很明显，如果每次读写都以这么小为单位，那这读写的效率会非常低。所以，文件系统把多个扇区组成了一个**逻辑块**，每次读写的最小单位就是逻辑块（数据块），Linux 中的逻辑块大小为 `4KB`，也就是一次性读写 8 个扇区，这将大大提高了磁盘的读写的效率。
+
+![](img/Linux/inode-datablock.jpg)
 
 ## 进程与VFS
+
+![](img/Linux/relation.jpg)
 
 ### 数据结构
 
