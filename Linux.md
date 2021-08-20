@@ -10,14 +10,14 @@
     * [由众多功能单一的程序组成](#由众多功能单一的程序组成)
 * [虚拟文件系统VFS](#虚拟文件系统vfs)
     * [数据结构](#数据结构)
-        * [超级块对象 super block](#超级块对象-super-block)
+        * [超级块对象 `super block`](#超级块对象-super-block)
             * [文件系统](#文件系统)
             * [挂载点](#挂载点)
             * [超级块](#超级块)
             * [关系](#关系)
         * [目录项对象`dentry`](#目录项对象dentry)
-            * [dentry](#dentry)
-            * [dentry cache](#dentry-cache)
+            * [`dentry`](#dentry)
+            * [`dentry cache`](#dentry-cache)
         * [文件对象](#文件对象)
             * [已打开文件](#已打开文件)
             * [已打开文件表](#已打开文件表)
@@ -26,6 +26,7 @@
             * [inode的产生](#inode的产生)
             * [inode的管理](#inode的管理)
                 * [链接](#链接)
+                * [inode与数据块](#inode与数据块)
     * [进程与VFS](#进程与vfs)
         * [数据结构](#数据结构-1)
             * [进程`task_struct`](#进程task_struct)
@@ -63,10 +64,11 @@
     * [标准IO](#标准io)
         * [读写过程](#读写过程)
     * [零拷贝技术](#零拷贝技术)
-        * [[减少拷贝：`mmap()`内存映射](# 内存映射：`mmap()`)](#减少拷贝mmap内存映射-内存映射mmap)
-        * [[减少拷贝：`Linux::sendfile()`](# `sendfile()`)](#减少拷贝linuxsendfile-sendfile)
-        * [[减少拷贝：`Linux::splice()`](# `splice()`)](#减少拷贝linuxsplice-splice)
-        * [减少拷贝：`Linux::tee()`](#减少拷贝linuxtee)
+        * [减少拷贝](#减少拷贝)
+            * [[`mmap()`内存映射](# 内存映射：`mmap()`)](#mmap内存映射-内存映射mmap)
+            * [[`Linux::sendfile()`](# `sendfile()`)](#linuxsendfile-sendfile)
+            * [[`Linux::splice()`](# `splice()`)](#linuxsplice-splice)
+            * [`Linux::tee()`](#linuxtee)
         * [直接IO](#直接io)
             * [概述](#概述)
             * [用户直接访问硬件](#用户直接访问硬件)
@@ -924,7 +926,7 @@ Linux 内核会在内存将要耗尽的时候，触发内存回收的工作，�
 
 #### [`Linux::splice()`](# `splice()`)
 
-####`Linux::tee()`
+#### `Linux::tee()`
 
 在两个管道文件描述符之间复制数据，同是零拷贝。但它不消耗数据，数据被操作之后，仍然可以用于后续操作。 `flag`参数和`splice()`一样。
 
@@ -1419,17 +1421,23 @@ int dup3(int oldfd, int newfd, int flags);
 
 ### 函数权限与标志
 
+#### `flags`标志
+
+指打开文件的方式，一般是文件已经存在，我们用何种方式去打开。
+
+| 互斥主标志 | `O_RDONLY` | `O_WRONLY` | `O_EXEC` | `O_RDWR` |
+| :--------: | :--------: | :--------: | :------: | :------: |
+|  **含义**  |    只读    |    只写    |  只执行  |  可读写  |
+
+|   相容副标志   |     `O_APPEND`     |    `O_TRUNC`     |    `O_CREAT`     |              `O_EXCL`               |
+| :------------: | :----------------: | :--------------: | :--------------: | :---------------------------------: |
+|    **含义**    | 从文件尾部开始读写 | 写打开时清空文件 |   自动创建文件   | 与`O_CREAT`配合时创建重复文件会报错 |
+| **相容副标志** |   **`O_RSYNC`**    |   **`O_SYNC`**   | **`O_NONBLOCK`** |           **`O_NOCTTY`**            |
+|    **含义**    |                    |     同步写入     |      非阻塞      |                                     |
+
 #### `mode_t`标志
 
-| 互斥主标志 | `O_RDONLY` | `O_WRONLY` | `O_RDWR` |
-| :--------: | :--------: | :--------: | :------: |
-|  **含义**  |    只读    |    只写    |  可读写  |
-
-| 相容副标志 |     `O_APPEND`     |    `O_TRUNC`     |  `O_CREAT`   |              `O_EXCL`               |
-| :--------: | :----------------: | :--------------: | :----------: | :---------------------------------: |
-|    含义    | 从文件尾部开始读写 | 写打开是清空文件 | 自动创建文件 | 与`O_CREAT`配合时创建重复文件会报错 |
-
-#### 权限标志
+在创建文件时才会用到
 
 |           | 文件所有者权限 | 群组其他成员权限 | 其他用户权限 |
 | :-------: | :------------: | :--------------: | :----------: |
@@ -3855,3 +3863,5 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 [Linux内核同步](https://www.cnblogs.com/alantu2018/p/8997348.html)
 
 [linux spinlock/rwlock/seqlock原理剖析（基于ARM64）](https://www.cnblogs.com/LoyenWang/p/12632532.html)
+
+[linux高级编程常用的系统调用函数整理](https://blog.csdn.net/dengminghli/article/details/77439991)
