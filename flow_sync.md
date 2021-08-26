@@ -1,4 +1,4 @@
-基于libevent的时间回调机制和openssl的支持实现基本的https连接，通过支持get、post等基本的方法实现了https服务器的基本功能，通过支持分块传输支持了文本与二进制大文件的无损传输，通过支持cookie和长连接特性保持了TCP连接的状态，避免反复建立连接浪费服务器资源。
+
 
 https://www.cnblogs.com/biterror/p/6909860.html
 
