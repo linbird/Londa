@@ -26,16 +26,3 @@ https://www.cdecl.org/
 
 网易面试（C++基础）_In-My-World的专栏-CSDN博客_网易c++
 https://blog.csdn.net/xiaominkong123/article/details/52232268
-
-strlen和sizeof取字符串长度的区别_涯的博客-CSDN博客_strlen和sizeof求字符串长度的区别
-https://blog.csdn.net/yzbk_dxy/article/details/59484730
-
-关于C++中strlen(str)和sizeof(str) - Limor宸 - 博客园
-https://www.cnblogs.com/LimorC/p/11208040.html
-
-指针空值——nullptr_风一样的男子（quinta）的博客-CSDN博客_nullptr的值
-https://blog.csdn.net/quinta_2018_01_09/article/details/94479275
-
-NULL、0、nullptr的区别 - NoThx - 博客园
-https://www.cnblogs.com/nothx/p/8523191.html
-
