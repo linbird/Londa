@@ -433,14 +433,6 @@ https://www.google.com/search?client=firefox-b-d&q=c%2B%2B%E5%8D%8F%E7%A8%8B%E5%
 (1条未读私信) C++后台：从实习到秋招的总结(已签腾讯微信)_笔经面经_牛客网
 https://www.nowcoder.com/discuss/586944?type=post&order=time&pos=&page=2&ncTraceId=&channel=-1&source_id=search_post_nctrack
 
-函数返回值可以是unique_ptr吗 - Google 搜索
-https://www.google.com/search?client=firefox-b-d&q=%E5%87%BD%E6%95%B0%E8%BF%94%E5%9B%9E%E5%80%BC%E5%8F%AF%E4%BB%A5%E6%98%AFunique_ptr%E5%90%97
-
-面向对象和面向过程的区别、优缺点_不浪漫罪名的博客-CSDN博客
-https://blog.csdn.net/ji519974770/article/details/79676710
-
-程序的编译连接，静态链接和动态链接，分别什么时候链接的 - Google 搜索
-https://www.google.com/search?client=firefox-b-d&q=%E7%A8%8B%E5%BA%8F%E7%9A%84%E7%BC%96%E8%AF%91%E8%BF%9E%E6%8E%A5%EF%BC%8C%E9%9D%99%E6%80%81%E9%93%BE%E6%8E%A5%E5%92%8C%E5%8A%A8%E6%80%81%E9%93%BE%E6%8E%A5%EF%BC%8C%E5%88%86%E5%88%AB%E4%BB%80%E4%B9%88%E6%97%B6%E5%80%99%E9%93%BE%E6%8E%A5%E7%9A%84
 
 LeetCode算法题整理（数组篇）Array | Xiaoliji's Blog
 https://darktiantian.github.io/LeetCode%E7%AE%97%E6%B3%95%E9%A2%98%E6%95%B4%E7%90%86%EF%BC%88%E6%95%B0%E7%BB%84%E7%AF%87%EF%BC%89Array/
@@ -459,7 +451,3 @@ https://leetcode-cn.com/problems/find-minimum-in-rotated-sorted-array-ii/
 
 剑指 Offer 11. 旋转数组的最小数字 题解 - 力扣（LeetCode）
 https://leetcode-cn.com/problems/xuan-zhuan-shu-zu-de-zui-xiao-shu-zi-lcof/solution/
-
-强制调用基类的虚函数_百度搜索
-https://www.baidu.com/s?wd=%E5%BC%BA%E5%88%B6%E8%B0%83%E7%94%A8%E5%9F%BA%E7%B1%BB%E7%9A%84%E8%99%9A%E5%87%BD%E6%95%B0&rsv_spt=1&rsv_iqid=0xfb185dcb00016774&issp=1&f=8&rsv_bp=1&rsv_idx=2&ie=utf-8&tn=baiduhome_pg&rsv_dl=ib&rsv_enter=1&rsv_n=2&rsv_sug3=7&rsv_sug1=7&rsv_sug7=100&rsv_sug2=0&rsv_btype=i&prefixsug=%25E5%25BC%25BA%25E5%2588%25B6%25E8%25B0%2583%25E7%2594%25A8%25E5%259F%25BA%25E7%25B1%25BB%25E7%259A%2584%25E8%2599%259A%25E5%2587%25BD%25E6%2595%25B0&rsp=1&inputT=4227&rsv_sug4=4227
-
