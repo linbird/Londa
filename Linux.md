@@ -1274,66 +1274,7 @@ ssize_t splice(int fd_in, loff_t *off_in, int fd_out, loff_t *off_out, size_t le
 
 
 
-## 内存分配 
-
- 从操作系统角度来看，进程用户空间分配内存主要由**`brk()`和`mmap()`**两个系统调用完成，这两种内存分配调用分配的都是**以页为基本单位的虚拟内存**，其物理内存的分配发生在第一次访问已分配的虚拟地址空间产生缺页中断时，OS会负责分配物理内存，然后建立虚拟内存和物理内存之间的映射关系。
-
-`brk()、sbrk()、mmap()`完成的都是以页为基本单位的大粒度内存分配，更小粒度的内存分配由具体的调用器（如`malloc()`、STL分配器等）负责实现。
-
-### `brk()/sbrk()`
-
-该函数负责在**堆空间**分配大小**小于等于`M_TRIM_THRESHOLD(128KB)`**的内存，在分配虚拟内存时将**`brk`指针**（指向堆的顶部）向高地址方向增加指定的大小。
-
-```c
-int brk( const void *addr );//设置brk为addr
-void* sbrk ( intptr_t incr );//incr为申请的地址的大小，返回新的brk
-```
-
-#### 内存释放
-
-**`brk`指针始终指向指向堆的顶部**，只有当高地址内存释放完后，`brk`才能回撤同时触发物理内存的回收。但如果堆空间里的可用空闲内存空间超过`M_TRIM_THRESHOLD(128KB)`时也会**触发内存紧缩**（虚拟和物理），否则里面的可用地址也可以被**重用**。
-
-### `mmap()/munmap()`
-
-该函数通过创建**私有匿名的映射段**，在**MMS段**分配大小**大于`M_TRIM_THRESHOLD(128KB)`**的内存。
-
-```c
-void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);//分配
-int munmap(void *addr, size_t length);//释放
-```
-
-#### 内存释放
-
-可以单独释放
-
-### [其他分配函数](https://www.jianshu.com/p/e42f4977fb7e)
-
-|                       函数                        | 模态 |   空间连续性   |          空间          |       分配速度       |
-| :-----------------------------------------------: | :--: | :------------: | :--------------------: | :------------------: |
-|                     `kmalloc`                     | 内核 | 虚拟物理都连续 | 内核（低端内存）小内存 |         最快         |
-|                     `vmalloc`                     | 内核 |  连续虚拟地址  | 内核（高端内存）大内存 |     稍慢（改PT）     |
-| [`malloc`](https://zhuanlan.zhihu.com/p/57863097) | 用户 |  内部有内存池  |       用户堆空间       | 最慢（改PT、切模态） |
-
-```c
-void *kmalloc(size_t size, int flags);
-void kfree(const void *ptr);
-
-void *vmalloc(unsigned long size);
-void vfree(void *addr);
-
-void *malloc(size_t size);//底层依赖mmap、munmap、brk、sbrk
-void free(void *ptr);
-```
-
-|         接口         |           分配原理           |   最大内存   |               其他               |
-| :------------------: | :--------------------------: | :----------: | :------------------------------: |
-|  `__get_free_page`   |         直接操作叶框         |      4M      |     用于分配大量连续物理内存     |
-|  `kmem_cache_alloc`  |        基于`slab`机制        |    128KB     | 用于频繁申请释放相同大小的内存块 |
-|      `kmalloc`       |    基于`kmem_cache_alloc`    |    128KB     |      常见于分配小于一页内存      |
-|      `vmalloc`       | 映射非连续物理地址到虚拟地址 |              |    用于大内存且不要求物理连续    |
-| `dma_alloc_coherent` |      基于`__alloc_page`      |     4MB      |           用于DMA操作            |
-|      `ioremap`       |  映射已知物理内存到虚拟内存  |              | 用于设备驱动等已知物理地址等场合 |
-|   `alloc_bootmem`    | 通过内核启动参数预留一段内存 | 《物理内存下 |         对用户水平要求高         |
+## 内存分配
 
 ## 实体克隆
 
@@ -3518,21 +3459,27 @@ struct page {//描述每一个物理内存页
 }
 ```
 
-### 内存分配与回收
+### [内存分配与回收](# 物理内存分配)
 
-#### [整体架构](https://dreamgoing.github.io/linux%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86.html)
+# 内存分配
+
+![](/home/linbird/Londa/img/Linux/memory-allocate.jpg)
+
+## 物理内存分配
+
+### [整体架构](https://dreamgoing.github.io/linux%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86.html)
 
 基于物理内存在内核空间中的映射原理，物理内存的管理方式也有所不同。内核中物理内存的管理机制主要有伙伴算法，slab高速缓存和`vmalloc`机制。其中伙伴算法和slab高速缓存都在物理内存映射区分配物理内存，而vmalloc机制则在高端内存映射区分配物理内存。对于用户内存空间使用**`malloc()\free()`**的方式对内存进行管理，而对于内核使用`Slab`或者`vmalloc`的方式对内存进行管理（内核则向外提供了[**`kmalloc()\kfree()、vmalloc()\vfree()`**](# 其他分配函数)两组内存管理接口函数）。
 
-![虚拟内存分配概览](img/Linux/virtual-memory-system.png)
+![物理内存分配概览](img/Linux/virtual-memory-system.png)
 
-#### [Buddy伙伴系统（解决外碎片）](https://blog.csdn.net/gatieme/article/details/52420444)
+### [Buddy伙伴系统（解决外碎片）](https://blog.csdn.net/gatieme/article/details/52420444)
 
 把所有的空闲页面分为11 个块组，每组由若干个大小相同的块（每块有$2^x, x=[0,10]$个**页**）构成链，每个不同大小的块组又用链表组织起来。以页为单位管理和分配内存，通过监视内存的分配情况，解决外碎片的问题。
 
 ![伙伴系统对内存的组织](img/Linux/buddy.png)
 
-##### 分配
+#### 分配
 
 **原则：**保证在内核只要申请一小块内存的情况下，不会从大块的连续空闲内存中截取一段过来，从而保证了大块内存的连续性和完整性。
 
@@ -3540,25 +3487,25 @@ struct page {//描述每一个物理内存页
 
 ![伙伴算法下的分配](img/Linux/buddy-alloc.png)
 
-##### 释放
+#### 释放
 
 将释放的空闲块中的**伙伴块（大小相同且物理地址连续的两个块）合并**成一个更大的快，迭代重复这一过程知道无法合并。
 
 ![伙伴块合并](img/Linux/mem-join.jpg)
 
-#### [Slab分配机制（解决内碎片）](https://kernel.blog.csdn.net/article/details/52705552)
+### [Slab分配机制（解决内碎片）](https://kernel.blog.csdn.net/article/details/52705552)
 
 ==此部分主要是思想的描述，由于slab有多种实现方法，故下文中的数据结构描述只是抽象的描述==
 
 Slab分配器向外部提供的接口为**`kmalloc()、kfree()`**，它**以伙伴系统为基础、以字节为分配单位、基于对象的**为**经常分配并释放的小对象**提供内存管理和**缓存**机制。Slab分配器提供了**专用slab**（负责为`m_area_struct、mm_struct`等特定结构体分配内存）和**通用slab**两种（`sudo cat /proc/slabinfo`中名为`kmalloc-xxx`的为通用型slab）分配，两种`slab`的分配和管理机制完全相同。`slab`的核心为**最小粒度为对象和内存惰性归还**。
 
-##### 数据结构
+#### 数据结构
 
-###### 整体组织
+##### 整体组织
 
 ![太难李](img/Linux/slablayer.png)
 
-###### `struct slab/page`
+##### `struct slab/page`
 
 slab指**一个或多个连续的物理页构成的内存空间**（每个slab的页数目为$2^{kmem\_cache::gfporder}$），它存储了实际的有效对象（个数为`kmem_cache::num`），内核对每个slab结构的描述借助**`struct page`实现**（`page`结构体包含了大量的`union`，既可以描述页又可以描述`slab`）。不同分配状态的单个slab被组织成一个链表，当一个slab的分配状态出现变化时，这个slab将会进入到别的链表中。
 
@@ -3576,7 +3523,7 @@ slab指**一个或多个连续的物理页构成的内存空间**（每个slab�
 
 ![kmem_bufctl_t](img/Linux/kmem_bufctl_t.png)
 
-###### `struct kmem_cache`
+##### `struct kmem_cache`
 
 ```c
 struct kmem_cache {//每类对象一个实例
@@ -3596,7 +3543,7 @@ Slab分配器的主要管理结构，每个`kmem_cache`管理不同大小的基�
 
 `kmem_cache`内部的**`kmem_cache_node[MAX_NUMNODES]/(kmem_list3)`**数组记录了该类几种不同分配状态的slab构成的链表，开始时这三个链表都为空，只有在申请对象时发现没有可用的slab时才会创建一个新的slab加入到链表中。
 
-###### `struct kmem_cache::array_cache`
+##### `struct kmem_cache::array_cache`
 
 ```c
 struct array_cache {	//每个CPU核心一个实例
@@ -3610,18 +3557,85 @@ struct array_cache {	//每个CPU核心一个实例
 
 对应于**每个CPU核心存在一个实例**，该实例保存了对应CPU核心上最后释放的对象。
 
-##### 管理
+#### 管理
 
 ![分配流程](img/Linux/slab-alloc-step.png)
 
-######  分配
+##### 分配
 
 **优先从array_cache的entry中按LIFO原则**（最后的对象很可能还在硬件cache）。如果`entry`为空，则说明是第一次从`array_cache`中分配obj或者是`array_cache`中的所有对象都已分配，所以需要先从`kmem_cache`的`kmem_list3`中取出`batchcount`个对象，把这些对象全部填充到entry中，然后再分配。
 
-###### 释放
+##### 释放
 
 **优先释放到`kmem_cache::array_cache`中**。只有`kmem_cache::array_cache`中的对象数量超过了上限`kmem_cache::limit`，系统才会将`kmem_cache::array_cache::entry`中的前`kmem_cache::batchcount`个对象搬到`kmem_cach::kmem_list3`中。当slab数量太多时，`kmem_cache`会将一些slab释放回伙伴系统中。
 
+
+## 虚拟内存分配
+
+### 用户空间分配
+
+ 从操作系统角度来看，进程用户空间分配内存主要由**`brk()`和`mmap()`**两个系统调用完成，这两种内存分配调用分配的都是**以页为基本单位的虚拟内存**，其物理内存的分配发生在第一次访问已分配的虚拟地址空间产生缺页中断时，OS会负责分配物理内存，然后建立虚拟内存和物理内存之间的映射关系。
+
+`brk()、sbrk()、mmap()`完成的都是以页为基本单位的大粒度内存分配，更小粒度的内存分配由具体的调用器（如`malloc()`、STL分配器等）负责实现。
+
+### `brk()/sbrk()`
+
+该函数负责在**堆空间**分配大小**小于等于`M_TRIM_THRESHOLD(128KB)`**的内存，在分配虚拟内存时将**`brk`指针**（指向堆的顶部）向高地址方向增加指定的大小。
+
+```c
+int brk( const void *addr );//设置brk为addr
+void* sbrk ( intptr_t incr );//incr为申请的地址的大小，返回新的brk
+```
+
+#### 内存释放
+
+**`brk`指针始终指向指向堆的顶部**，只有当高地址内存释放完后，`brk`才能回撤同时触发物理内存的回收。但如果堆空间里的可用空闲内存空间超过`M_TRIM_THRESHOLD(128KB)`时也会**触发内存紧缩**（虚拟和物理），否则里面的可用地址也可以被**重用**。
+
+### `mmap()/munmap()`
+
+该函数通过创建**私有匿名的映射段**，在**MMS段**分配大小**大于`M_TRIM_THRESHOLD(128KB)`**的内存。
+
+```c
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);//分配
+int munmap(void *addr, size_t length);//释放
+```
+
+#### 内存释放
+
+可以单独释放
+
+### 内核空间分配
+
+|                       函数                        | 模态 |   空间连续性   |          空间          |       分配速度       |
+| :-----------------------------------------------: | :--: | :------------: | :--------------------: | :------------------: |
+|                     `kmalloc`                     | 内核 | 虚拟物理都连续 | 内核（低端内存）小内存 |         最快         |
+|                     `vmalloc`                     | 内核 |  连续虚拟地址  | 内核（高端内存）大内存 |     稍慢（改PT）     |
+| [`malloc`](https://zhuanlan.zhihu.com/p/57863097) | 用户 |  内部有内存池  |       用户堆空间       | 最慢（改PT、切模态） |
+
+```c
+void *kmalloc(size_t size, int flags);
+void kfree(const void *ptr);
+
+void *vmalloc(unsigned long size);
+void vfree(void *addr);
+
+void *malloc(size_t size);//底层依赖mmap、munmap、brk、sbrk
+void free(void *ptr);
+```
+
+![](./img/Linux/kernal-malloc.png)
+
+### [分配方法](https://www.jianshu.com/p/e42f4977fb7e)
+
+|         接口         |           分配原理           |   最大内存   |               其他               |
+| :------------------: | :--------------------------: | :----------: | :------------------------------: |
+|  `__get_free_page`   |         直接操作叶框         |      4M      |     用于分配大量连续物理内存     |
+|  `kmem_cache_alloc`  |        基于`slab`机制        |    128KB     | 用于频繁申请释放相同大小的内存块 |
+|      `kmalloc`       |    基于`kmem_cache_alloc`    |    128KB     |      常见于分配小于一页内存      |
+|      `vmalloc`       | 映射非连续物理地址到虚拟地址 |              |    用于大内存且不要求物理连续    |
+| `dma_alloc_coherent` |      基于`__alloc_page`      |     4MB      |           用于DMA操作            |
+|      `ioremap`       |  映射已知物理内存到虚拟内存  |              | 用于设备驱动等已知物理地址等场合 |
+|   `alloc_bootmem`    | 通过内核启动参数预留一段内存 | 《物理内存下 |         对用户水平要求高         |
 
 # [交换空间](https://blog.csdn.net/qkhhyga2016/article/details/88722458)
 
@@ -3871,3 +3885,5 @@ static DEFINE_PER_CPU(struct pagevec, activate_page_pvecs);
 [linux spinlock/rwlock/seqlock原理剖析（基于ARM64）](https://www.cnblogs.com/LoyenWang/p/12632532.html)
 
 [linux高级编程常用的系统调用函数整理](https://blog.csdn.net/dengminghli/article/details/77439991)
+
+[Linux 进程间通信 (IPC)](https://oxnz.github.io/2014/03/31/linux-IPC/)
