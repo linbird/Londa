@@ -1274,7 +1274,70 @@ ssize_t splice(int fd_in, loff_t *off_in, int fd_out, loff_t *off_out, size_t le
 
 
 
+<<<<<<< HEAD
 ## 内存分配
+=======
+## 内存分配 
+
+ 从操作系统角度来看，**进程用户空间**分配内存主要由**`brk()`和`mmap()`**两个系统调用完成，这两种内存分配调用分配的都是**以页为基本单位的虚拟内存**，其物理内存的分配发生在第一次访问已分配的虚拟地址空间产生缺页中断时，OS会负责分配物理内存，然后建立虚拟内存和物理内存之间的映射关系。
+
+`brk()、sbrk()、mmap()`完成的都是以页为基本单位的大粒度内存分配，更小粒度的内存分配由具体的调用器（如`malloc()`、STL分配器等）负责实现。
+
+### `brk()/sbrk()`
+
+该函数负责在**堆空间**分配大小**小于等于`M_TRIM_THRESHOLD(128KB)`**的内存，在分配虚拟内存时将**`brk`指针**（指向堆的顶部）向高地址方向增加指定的大小。
+
+```c
+int brk( const void *addr );//设置brk为addr
+void* sbrk ( intptr_t incr );//incr为申请的地址的大小，返回新的brk
+```
+
+#### 内存释放
+
+**`brk`指针始终指向指向堆的顶部**，只有当高地址内存释放完后，`brk`才能回撤同时触发物理内存的回收。但如果堆空间里的可用空闲内存空间超过`M_TRIM_THRESHOLD(128KB)`时也会**触发内存紧缩**（虚拟和物理），否则里面的可用地址也可以被**重用**。
+
+### `mmap()/munmap()`
+
+该函数通过创建**私有匿名的映射段**，在**MMS段**分配大小**大于`M_TRIM_THRESHOLD(128KB)`**的内存。
+
+```c
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);//分配
+int munmap(void *addr, size_t length);//释放
+```
+
+#### 内存释放
+
+可以单独释放
+
+### [其他分配函数](https://www.jianshu.com/p/e42f4977fb7e)
+
+|                       函数                        | 模态 |   空间连续性   |          空间          |       分配速度       |
+| :-----------------------------------------------: | :--: | :------------: | :--------------------: | :------------------: |
+|                     `kmalloc`                     | 内核 | 虚拟物理都连续 | 内核（低端内存）小内存 |         最快         |
+|                     `vmalloc`                     | 内核 |  连续虚拟地址  | 内核（高端内存）大内存 |     稍慢（改PT）     |
+| [`malloc`](https://zhuanlan.zhihu.com/p/57863097) | 用户 |  内部有内存池  |       用户堆空间       | 最慢（改PT、切模态） |
+
+```c
+void *kmalloc(size_t size, int flags);
+void kfree(const void *ptr);
+
+void *vmalloc(unsigned long size);
+void vfree(void *addr);
+
+void *malloc(size_t size);//底层依赖mmap、munmap、brk、sbrk
+void free(void *ptr);
+```
+
+|         接口         |           分配原理           |   最大内存   |               其他               |
+| :------------------: | :--------------------------: | :----------: | :------------------------------: |
+|  `__get_free_page`   |         直接操作叶框         |      4M      |     用于分配大量连续物理内存     |
+|  `kmem_cache_alloc`  |        基于`slab`机制        |    128KB     | 用于频繁申请释放相同大小的内存块 |
+|      `kmalloc`       |    基于`kmem_cache_alloc`    |    128KB     |      常见于分配小于一页内存      |
+|      `vmalloc`       | 映射非连续物理地址到虚拟地址 |              |    用于大内存且不要求物理连续    |
+| `dma_alloc_coherent` |      基于`__alloc_page`      |     4MB      |           用于DMA操作            |
+|      `ioremap`       |  映射已知物理内存到虚拟内存  |              | 用于设备驱动等已知物理地址等场合 |
+|   `alloc_bootmem`    | 通过内核启动参数预留一段内存 | 《物理内存下 |         对用户水平要求高         |
+>>>>>>> 021963d5b7451b0ae05c6e22b98f794d955920b8
 
 ## 实体克隆
 
@@ -3331,7 +3394,7 @@ Linux通过将每个段的起始地址赋予一个随机偏移量**`random offse
 
 **映射段（Memory Mapping Segment）**：Linux中通过`mmap()`系统调用，Windows中通过`creatFileMapping()/MapViewOfFile()`**动态创建**的区域。内核通过使用该区域（**内存映射**）可以避免内核空间和用户空间的文件拷贝，直接将文件内容直接映射到内存以实现**快速IO**。常被用来加载动态库、创建[匿名映射](https://www.jianshu.com/p/b24265a3a222)。在C库函数中，如果一次申请内存大于`M_MMAP_THRESHOLD(128K)`字节时，库函数会**自动使用映射段创建匿名映射**。
 
-**栈**：Linux进程在运行过程中遇到栈满时会自动试图增加栈大小（上限是`RLIMIT_STACK(8MB)`），如果无法增加才会出现段错误。而只有[动态栈增长](http://lxr.linux.no/linux+v2.6.28.1/arch/x86/mm/fault.c#L692)（由`alloca()`完成）访问到未分配区域是合法的（白色区域）其它方式访问到未映射区域时都会引发一次页错误，进而导致段错误。
+**栈**：Linux进程在运行过程中遇到栈满时会自动试图增加栈大小（上限是`RLIMIT_STACK(8MB)`），如果无法增加才会出现段错误。而只有[动态栈增长](http://lxr.linux.no/linux+v2.6.28.1/arch/x86/mm/fault.c#L692)（主要由编译器通过`_alloca()`完成，其空间由编译器释放）访问到未分配区域是合法的（白色区域），其它方式访问到未映射区域时都会引发一次页错误，进而导致段错误。
 
 ### 段的管理
 
@@ -3469,7 +3532,7 @@ struct page {//描述每一个物理内存页
 
 ### [整体架构](https://dreamgoing.github.io/linux%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86.html)
 
-基于物理内存在内核空间中的映射原理，物理内存的管理方式也有所不同。内核中物理内存的管理机制主要有伙伴算法，slab高速缓存和`vmalloc`机制。其中伙伴算法和slab高速缓存都在物理内存映射区分配物理内存，而vmalloc机制则在高端内存映射区分配物理内存。对于用户内存空间使用**`malloc()\free()`**的方式对内存进行管理，而对于内核使用`Slab`或者`vmalloc`的方式对内存进行管理（内核则向外提供了[**`kmalloc()\kfree()、vmalloc()\vfree()`**](# 其他分配函数)两组内存管理接口函数）。
+基于物理内存在内核空间中的映射原理，物理内存的管理方式也有所不同。内核中**物理内存的管理机制**主要有伙伴算法，`slab`高速缓存和`vmalloc`机制。其中伙伴算法和`slab`高速缓存都在物理内存映射区分配物理内存，而`vmalloc`机制则在高端内存映射区分配物理内存。对于用户内存空间使用**`malloc()\free()`**的方式对内存进行管理，而对于内核使用`Slab`或者`vmalloc`的方式对内存进行管理（内核则向外提供了[**`kmalloc()\kfree()、vmalloc()\vfree()`**](# 其他分配函数)两组内存管理接口函数）。
 
 ![物理内存分配概览](img/Linux/virtual-memory-system.png)
 
