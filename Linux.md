@@ -1272,7 +1272,7 @@ ssize_t splice(int fd_in, loff_t *off_in, int fd_out, loff_t *off_out, size_t le
 
 ### `vmsplice()`
 
-## [内存分配](# 用户空间内存分配)
+## [内存分配](# 用户内存分配)
 
 ## 实体克隆
 
